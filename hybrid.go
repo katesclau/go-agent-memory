@@ -61,6 +61,12 @@ func NewHybridMemory(cfg Config) (Memory, error) {
 
 // AddMessage adds a message to both Redis (for fast access) and Supabase (for persistence)
 func (hm *HybridMemory) AddMessage(ctx context.Context, msg Message) error {
+	// Default the timestamp once here so both Supabase and Redis observe the
+	// same created_at; a zero time.Time would otherwise persist as year 0001.
+	if msg.Timestamp.IsZero() {
+		msg.Timestamp = time.Now()
+	}
+
 	// Add to Supabase for persistence and semantic search
 	if err := hm.supabase.AddMessage(ctx, msg); err != nil {
 		// Log but don't fail if Supabase write fails

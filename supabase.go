@@ -122,6 +122,14 @@ func (sm *SupabaseMemory) AddMessage(ctx context.Context, msg Message) error {
 		}
 	}
 
+	// Default created_at to the current time when the caller did not provide a
+	// timestamp. Binding a zero time.Time would otherwise write year 0001 to
+	// Postgres, overriding the schema's DEFAULT NOW() and making created_at
+	// unusable for ordering/TTL.
+	if msg.Timestamp.IsZero() {
+		msg.Timestamp = time.Now()
+	}
+
 	metadataJSON, err := json.Marshal(msg.Metadata)
 	if err != nil {
 		return fmt.Errorf("failed to marshal metadata: %w", err)

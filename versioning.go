@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -23,14 +24,16 @@ var (
 	ErrVersionSessionRequired          = errors.New("versioned message session ID is required")
 	ErrVersionEffectiveAtFuture        = errors.New("version effective time must not be in the future")
 	ErrVersionEffectiveAtBeforeCurrent = errors.New("version effective time precedes the current version")
+	ErrVersionSessionChanged           = errors.New("versioned messages must keep the same session ID")
 )
 
 type preparedVersionRequest struct {
-	Message     Message
-	Namespace   string
-	Key         string
-	Revision    string
-	EffectiveAt time.Time
+	Message             Message
+	Namespace           string
+	Key                 string
+	Revision            string
+	EffectiveAt         time.Time
+	ExplicitEffectiveAt bool
 }
 
 func prepareVersionRequest(req VersionedMessageRequest) (preparedVersionRequest, error) {
@@ -50,6 +53,7 @@ func prepareVersionRequest(req VersionedMessageRequest) (preparedVersionRequest,
 		return preparedVersionRequest{}, ErrVersionSessionRequired
 	}
 	effectiveAt := req.EffectiveAt
+	explicitEffectiveAt := !effectiveAt.IsZero()
 	if effectiveAt.IsZero() {
 		effectiveAt = time.Now()
 	} else if effectiveAt.After(time.Now()) {
@@ -58,6 +62,7 @@ func prepareVersionRequest(req VersionedMessageRequest) (preparedVersionRequest,
 	return preparedVersionRequest{
 		Message: req.Message, Namespace: namespace, Key: key,
 		Revision: revision, EffectiveAt: effectiveAt.UTC(),
+		ExplicitEffectiveAt: explicitEffectiveAt,
 	}, nil
 }
 
@@ -150,8 +155,15 @@ func versionNumber(value interface{}) int {
 	case int32:
 		return int(v)
 	case int64:
+		if v > int64(^uint(0)>>1) || v < 1 {
+			return 0
+		}
 		return int(v)
 	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) || math.Trunc(v) != v ||
+			v < 1 || v > float64(^uint(0)>>1) {
+			return 0
+		}
 		return int(v)
 	case string:
 		number, _ := strconv.Atoi(v)

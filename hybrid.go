@@ -125,10 +125,11 @@ func (hm *HybridMemory) PutVersionedMessage(
 	if err != nil {
 		return VersionedMessageResult{}, err
 	}
-	if !result.Duplicate {
-		if err := hm.cacheMessage(ctx, result.Message); err != nil {
-			fmt.Printf("Warning: failed to cache versioned message: %v\n", err)
-		}
+	// Cached predecessors contain the metadata as it looked before the
+	// PostgreSQL transaction superseded them. Invalidate the whole session so
+	// the next read repopulates it from the durable source of truth.
+	if err := hm.ClearCache(ctx, result.Message.Metadata.SessionID); err != nil {
+		fmt.Printf("Warning: failed to invalidate versioned message cache: %v\n", err)
 	}
 	return result, nil
 }

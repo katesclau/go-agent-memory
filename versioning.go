@@ -166,6 +166,9 @@ func versionNumber(value interface{}) int {
 		}
 		return int(v)
 	case string:
+		if !canonicalVersionNumber(v) {
+			return 0
+		}
 		number, err := strconv.Atoi(v)
 		if err != nil {
 			return 0
@@ -174,6 +177,18 @@ func versionNumber(value interface{}) int {
 	default:
 		return 0
 	}
+}
+
+func canonicalVersionNumber(value string) bool {
+	if value == "" || value[0] < '1' || value[0] > '9' {
+		return false
+	}
+	for index := 1; index < len(value); index++ {
+		if value[index] < '0' || value[index] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func parseVersionTime(value interface{}) (time.Time, bool) {

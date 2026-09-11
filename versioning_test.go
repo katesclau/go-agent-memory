@@ -149,6 +149,12 @@ func TestVersionInfoRejectsFractionalVersion(t *testing.T) {
 	if _, ok := VersionInfo(msg); ok {
 		t.Fatal("overflowing version metadata was accepted")
 	}
+	for _, invalid := range []string{"+1", "01", "0", "-1"} {
+		msg.Metadata.Extra[versionMetadataKey].(map[string]interface{})["version"] = invalid
+		if _, ok := VersionInfo(msg); ok {
+			t.Fatalf("non-canonical version %q was accepted", invalid)
+		}
+	}
 }
 
 func putTestVersion(

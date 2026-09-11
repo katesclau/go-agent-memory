@@ -163,6 +163,13 @@ func (hm *HybridMemory) DeleteMessages(
 	return count, nil
 }
 
+func (hm *HybridMemory) SearchMessages(
+	ctx context.Context,
+	req SearchMessagesRequest,
+) ([]SearchResult, error) {
+	return hm.supabase.SearchMessages(ctx, req)
+}
+
 // GetRecentMessages retrieves recent messages from Redis first, falls back to Supabase
 func (hm *HybridMemory) GetRecentMessages(ctx context.Context, sessionID string, limit int) ([]Message, error) {
 	if limit <= 0 {

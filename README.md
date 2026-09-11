@@ -442,6 +442,27 @@ messages, err := managed.ListMessages(ctx, memory.ListMessagesRequest{
 The same filter works with `CountMessages` and `DeleteMessages`. Broad deletes
 are rejected unless `AllowAll` is explicitly set.
 
+### Filtered and Temporal Search
+`SearchableMemory` applies metadata and temporal filters before the result
+limit. Existing `Search` methods remain unchanged.
+
+```go
+searchable := mem.(memory.SearchableMemory)
+results, err := searchable.SearchMessages(ctx, memory.SearchMessagesRequest{
+    Query:     "request timeout",
+    Threshold: 0.65,
+    Limit:     5,
+    Filter: memory.MessageFilter{
+        ExtraEquals: map[string]interface{}{"environment": "qa"},
+    },
+    TemporalPolicy: memory.TemporalPolicyCurrentFirst,
+})
+```
+
+Use `TemporalPolicyCurrentOnly` for ordinary fact recall,
+`TemporalPolicyCurrentFirst` when returning history with current facts first,
+or `TemporalPolicyAllVersions` to rank only by relevance.
+
 ### Get Memory Statistics
 ```go
 stats, _ := mem.GetStats(ctx, "session-123")

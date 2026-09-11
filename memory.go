@@ -133,6 +133,32 @@ type DeleteMessagesRequest struct {
 	AllowAll bool          `json:"allow_all,omitempty"`
 }
 
+// SearchableMemory is an optional capability for filtered and temporal
+// retrieval. Legacy Search methods retain their existing behavior.
+type SearchableMemory interface {
+	SearchMessages(ctx context.Context, req SearchMessagesRequest) ([]SearchResult, error)
+}
+
+// TemporalPolicy controls version eligibility and ordering during search.
+type TemporalPolicy string
+
+const (
+	TemporalPolicyAllVersions  TemporalPolicy = ""
+	TemporalPolicyCurrentOnly  TemporalPolicy = "current_only"
+	TemporalPolicyCurrentFirst TemporalPolicy = "current_first"
+)
+
+// SearchMessagesRequest accepts either Query or a precomputed Embedding.
+// Embedding takes precedence when both are provided.
+type SearchMessagesRequest struct {
+	Query          string         `json:"query,omitempty"`
+	Embedding      []float32      `json:"embedding,omitempty"`
+	Limit          int            `json:"limit,omitempty"`
+	Threshold      float32        `json:"threshold,omitempty"`
+	Filter         MessageFilter  `json:"filter"`
+	TemporalPolicy TemporalPolicy `json:"temporal_policy,omitempty"`
+}
+
 // Summary represents a conversation summary
 type Summary struct {
 	SessionID    string    `json:"session_id"`

@@ -235,6 +235,9 @@ func (sm *SupabaseMemory) PutVersionedMessage(
 
 	if current.ID != "" {
 		info, _ := VersionInfo(current)
+		if prepared.EffectiveAt.Before(info.ValidFrom) {
+			return VersionedMessageResult{}, ErrVersionEffectiveAtBeforeCurrent
+		}
 		if info.Revision == prepared.Revision {
 			if err := supersedeOtherVersions(ctx, tx, prepared.Namespace, prepared.Key, current.ID, prepared.EffectiveAt); err != nil {
 				return VersionedMessageResult{}, err

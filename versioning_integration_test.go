@@ -110,3 +110,53 @@ func TestPostgresVersionedMessageConcurrencyAndRollback(t *testing.T) {
 		t.Fatalf("rollback changed current version from %#v to %#v", currentInfo, afterInfo)
 	}
 }
+
+func TestHybridVersionedMessageInvalidatesSessionCache(t *testing.T) {
+	databaseURL := os.Getenv("MEMORY_TEST_DATABASE_URL")
+	redisAddr := os.Getenv("MEMORY_TEST_REDIS_ADDR")
+	if databaseURL == "" || redisAddr == "" {
+		t.Skip("MEMORY_TEST_DATABASE_URL and MEMORY_TEST_REDIS_ADDR are required")
+	}
+	raw, err := NewHybridMemory(Config{
+		DatabaseURL: databaseURL, RedisAddr: redisAddr, VectorDimension: 1536,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mem := raw.(*HybridMemory)
+	t.Cleanup(func() { _ = mem.Close() })
+	ctx := context.Background()
+	namespace := fmt.Sprintf("hybrid-version-test-%d", time.Now().UnixNano())
+	embedding := make([]float32, 1536)
+	embedding[0] = 1
+
+	first, err := mem.PutVersionedMessage(ctx, VersionedMessageRequest{
+		Message: Message{
+			Role: "system", Content: "old", Embedding: embedding,
+			Metadata: Metadata{SessionID: namespace},
+		},
+		Namespace: namespace, Key: "key", Revision: "old",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.cacheMessage(ctx, first.Message); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mem.PutVersionedMessage(ctx, VersionedMessageRequest{
+		Message: Message{
+			Role: "system", Content: "current", Embedding: embedding,
+			Metadata: Metadata{SessionID: namespace},
+		},
+		Namespace: namespace, Key: "key", Revision: "current",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	exists, err := mem.redis.Exists(ctx, fmt.Sprintf("session:%s:messages", namespace)).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exists != 0 {
+		t.Fatal("versioned write left stale session messages in Redis")
+	}
+}

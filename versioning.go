@@ -17,10 +17,12 @@ const (
 )
 
 var (
-	ErrVersionNamespaceRequired = errors.New("version namespace is required")
-	ErrVersionKeyRequired       = errors.New("version key is required")
-	ErrVersionRevisionRequired  = errors.New("version revision is required")
-	ErrVersionSessionRequired   = errors.New("versioned message session ID is required")
+	ErrVersionNamespaceRequired        = errors.New("version namespace is required")
+	ErrVersionKeyRequired              = errors.New("version key is required")
+	ErrVersionRevisionRequired         = errors.New("version revision is required")
+	ErrVersionSessionRequired          = errors.New("versioned message session ID is required")
+	ErrVersionEffectiveAtFuture        = errors.New("version effective time must not be in the future")
+	ErrVersionEffectiveAtBeforeCurrent = errors.New("version effective time precedes the current version")
 )
 
 type preparedVersionRequest struct {
@@ -50,6 +52,8 @@ func prepareVersionRequest(req VersionedMessageRequest) (preparedVersionRequest,
 	effectiveAt := req.EffectiveAt
 	if effectiveAt.IsZero() {
 		effectiveAt = time.Now()
+	} else if effectiveAt.After(time.Now()) {
+		return preparedVersionRequest{}, ErrVersionEffectiveAtFuture
 	}
 	return preparedVersionRequest{
 		Message: req.Message, Namespace: namespace, Key: key,

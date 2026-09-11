@@ -91,6 +91,18 @@ func TestPostgresManagedMemoryRoundTrip(t *testing.T) {
 				},
 			}},
 		},
+		{
+			ID: tag + "-overflow", Role: "system", Content: "overflow",
+			Timestamp: time.Now(), Embedding: make([]float32, 1536),
+			Metadata: Metadata{SessionID: tag, Extra: map[string]interface{}{
+				"test_tag": tag,
+				versionMetadataKey: map[string]interface{}{
+					"namespace": tag, "key": "overflow", "revision": "one",
+					"version": "999999999999999999999999999999999999",
+					"status":  versionStatusSuperseded,
+				},
+			}},
+		},
 	} {
 		if err := mem.AddMessage(ctx, msg); err != nil {
 			t.Fatal(err)
@@ -99,7 +111,7 @@ func TestPostgresManagedMemoryRoundTrip(t *testing.T) {
 	current, err := mem.CountMessages(ctx, MessageFilter{
 		ExtraEquals: filter.ExtraEquals, TemporalState: TemporalStateCurrent,
 	})
-	if err != nil || current != 3 {
+	if err != nil || current != 4 {
 		t.Fatalf("current count = %d, err = %v", current, err)
 	}
 	historical, err := mem.CountMessages(ctx, MessageFilter{
@@ -109,7 +121,7 @@ func TestPostgresManagedMemoryRoundTrip(t *testing.T) {
 		t.Fatalf("historical count = %d, err = %v", historical, err)
 	}
 	deleted, err := mem.DeleteMessages(ctx, DeleteMessagesRequest{Filter: filter})
-	if err != nil || deleted != 4 {
+	if err != nil || deleted != 5 {
 		t.Fatalf("deleted = %d, err = %v", deleted, err)
 	}
 }

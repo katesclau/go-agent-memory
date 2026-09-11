@@ -124,3 +124,28 @@ func TestSessionOnlyManagedMemoryUsesJSONEquality(t *testing.T) {
 		t.Fatalf("count = %d, err = %v", count, err)
 	}
 }
+
+func TestSessionOnlyTreatsOverflowingVersionAsLegacyCurrent(t *testing.T) {
+	raw, err := NewSessionOnlyMemory(Config{MaxSessionMessages: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.AddMessage(context.Background(), Message{
+		ID: "overflow", Role: "system", Content: "legacy",
+		Metadata: Metadata{SessionID: "session", Extra: map[string]interface{}{
+			versionMetadataKey: map[string]interface{}{
+				"namespace": "namespace", "key": "key", "revision": "revision",
+				"version": "999999999999999999999999999999999999",
+				"status":  versionStatusSuperseded,
+			},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := raw.(ManagedMemory).CountMessages(context.Background(), MessageFilter{
+		TemporalState: TemporalStateCurrent,
+	})
+	if err != nil || current != 1 {
+		t.Fatalf("current count = %d, err = %v", current, err)
+	}
+}

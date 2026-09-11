@@ -80,6 +80,18 @@ func (sm *SupabaseMemory) initSchema(ctx context.Context) error {
 			RETURN NULL;
 		END;
 		$function$;
+
+		CREATE OR REPLACE FUNCTION agent_memory_try_bigint(value TEXT)
+		RETURNS BIGINT
+		LANGUAGE plpgsql
+		IMMUTABLE
+		AS $function$
+		BEGIN
+			RETURN value::BIGINT;
+		EXCEPTION WHEN others THEN
+			RETURN NULL;
+		END;
+		$function$;
 		
 		-- Create messages table
 		CREATE TABLE IF NOT EXISTS agent_messages (

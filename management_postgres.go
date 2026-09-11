@@ -178,6 +178,7 @@ func postgresHistoricalVersionPredicate() string {
 		AND nullif(%[1]s->>'key', '') IS NOT NULL
 		AND nullif(%[1]s->>'revision', '') IS NOT NULL
 		AND (%[1]s->>'version') ~ '^[1-9][0-9]*$'
+		AND agent_memory_try_bigint(%[1]s->>'version') IS NOT NULL
 		AND (
 			lower(coalesce(%[1]s->>'status', 'active')) = 'superseded'
 			OR agent_memory_try_timestamptz(%[1]s->>'valid_until') <= CURRENT_TIMESTAMP

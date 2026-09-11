@@ -166,7 +166,10 @@ func versionNumber(value interface{}) int {
 		}
 		return int(v)
 	case string:
-		number, _ := strconv.Atoi(v)
+		number, err := strconv.Atoi(v)
+		if err != nil {
+			return 0
+		}
 		return number
 	default:
 		return 0

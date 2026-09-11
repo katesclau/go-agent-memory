@@ -145,6 +145,13 @@ func postgresMessageFilter(filter MessageFilter) (string, []interface{}, error) 
 		}
 		add("coalesce(metadata->'extra', '{}'::jsonb) @> $%d::jsonb", encoded)
 	}
+	for key, value := range filter.ExtraEqualFold {
+		args = append(args, key, value)
+		clauses = append(clauses, fmt.Sprintf(
+			"lower(coalesce(metadata->'extra'->>$%d, '')) = lower($%d)",
+			len(args)-1, len(args),
+		))
+	}
 	if filter.CreatedAfter != nil {
 		add("created_at > $%d", filter.CreatedAfter.UTC())
 	}

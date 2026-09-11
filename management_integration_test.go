@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -51,6 +52,12 @@ func TestPostgresManagedMemoryRoundTrip(t *testing.T) {
 	count, err := mem.CountMessages(ctx, filter)
 	if err != nil || count != 2 {
 		t.Fatalf("count = %d, err = %v", count, err)
+	}
+	count, err = mem.CountMessages(ctx, MessageFilter{
+		ExtraEqualFold: map[string]string{"test_tag": strings.ToUpper(tag)},
+	})
+	if err != nil || count != 2 {
+		t.Fatalf("case-folded count = %d, err = %v", count, err)
 	}
 	count, err = mem.CountMessages(ctx, MessageFilter{
 		ExtraEquals: map[string]interface{}{"test_tag": tag, "number": float64(1)},

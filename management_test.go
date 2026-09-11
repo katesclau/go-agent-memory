@@ -49,6 +49,12 @@ func TestSessionOnlyManagedMemoryFiltersOrdersAndPaginates(t *testing.T) {
 	if count != 2 {
 		t.Fatalf("count = %d, want 2", count)
 	}
+	count, err = managed.CountMessages(context.Background(), MessageFilter{
+		ExtraEqualFold: map[string]string{"tag": "X"},
+	})
+	if err != nil || count != 2 {
+		t.Fatalf("case-folded count = %d, err = %v", count, err)
+	}
 }
 
 func TestSessionOnlyManagedMemoryTemporalStateAndDeleteGuard(t *testing.T) {

@@ -124,6 +124,26 @@ func TestSessionOnlyRejectsFutureAndBackdatedVersions(t *testing.T) {
 	if _, err := versioned.PutVersionedMessage(context.Background(), request); !errors.Is(err, ErrVersionEffectiveAtFuture) {
 		t.Fatalf("future error = %v", err)
 	}
+
+	request.EffectiveAt = time.Time{}
+	request.Revision = "other-session"
+	request.Message.Metadata.SessionID = "other"
+	if _, err := versioned.PutVersionedMessage(context.Background(), request); !errors.Is(err, ErrVersionSessionChanged) {
+		t.Fatalf("session change error = %v", err)
+	}
+}
+
+func TestVersionInfoRejectsFractionalVersion(t *testing.T) {
+	msg := Message{Metadata: Metadata{Extra: map[string]interface{}{
+		versionMetadataKey: map[string]interface{}{
+			"namespace": "namespace", "key": "key", "revision": "revision",
+			"version": 1.5, "status": versionStatusSuperseded,
+			"valid_from": time.Now().Format(time.RFC3339Nano),
+		},
+	}}}
+	if _, ok := VersionInfo(msg); ok {
+		t.Fatal("fractional version metadata was accepted")
+	}
 }
 
 func putTestVersion(

@@ -67,6 +67,9 @@ func (sm *SessionOnlyMemory) PutVersionedMessage(
 
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
+	if !prepared.ExplicitEffectiveAt {
+		prepared.EffectiveAt = time.Now().UTC()
+	}
 
 	var current Message
 	maxVersion := 0
@@ -90,6 +93,9 @@ func (sm *SessionOnlyMemory) PutVersionedMessage(
 
 	if current.ID != "" {
 		info, _ := VersionInfo(current)
+		if current.Metadata.SessionID != prepared.Message.Metadata.SessionID {
+			return VersionedMessageResult{}, ErrVersionSessionChanged
+		}
 		if prepared.EffectiveAt.Before(info.ValidFrom) {
 			return VersionedMessageResult{}, ErrVersionEffectiveAtBeforeCurrent
 		}

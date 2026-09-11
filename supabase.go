@@ -210,6 +210,9 @@ func (sm *SupabaseMemory) PutVersionedMessage(
 	); err != nil {
 		return VersionedMessageResult{}, fmt.Errorf("lock versioned message: %w", err)
 	}
+	if !prepared.ExplicitEffectiveAt {
+		prepared.EffectiveAt = time.Now().UTC()
+	}
 
 	messages, err := queryVersions(ctx, tx, prepared.Namespace, prepared.Key)
 	if err != nil {
@@ -235,6 +238,9 @@ func (sm *SupabaseMemory) PutVersionedMessage(
 
 	if current.ID != "" {
 		info, _ := VersionInfo(current)
+		if current.Metadata.SessionID != prepared.Message.Metadata.SessionID {
+			return VersionedMessageResult{}, ErrVersionSessionChanged
+		}
 		if prepared.EffectiveAt.Before(info.ValidFrom) {
 			return VersionedMessageResult{}, ErrVersionEffectiveAtBeforeCurrent
 		}
@@ -247,6 +253,25 @@ func (sm *SupabaseMemory) PutVersionedMessage(
 			}
 			return versionResult(current, true)
 		}
+	}
+	if duplicate && len(prepared.Message.Embedding) == 0 && prepared.Message.Content != "" {
+		// The preflight observed this revision as current, but another writer
+		// advanced the chain before this transaction acquired the lock. Release
+		// the lock, generate the embedding, and retry against the new state.
+		if err := tx.Rollback(ctx); err != nil {
+			return VersionedMessageResult{}, fmt.Errorf("rollback version embedding retry: %w", err)
+		}
+		retry := req
+		if !prepared.ExplicitEffectiveAt {
+			retry.EffectiveAt = time.Time{}
+		}
+		embedding, embeddingErr := sm.generateEmbedding(ctx, prepared.Message.Content)
+		if embeddingErr != nil {
+			fmt.Printf("Warning: failed to generate embedding: %v\n", embeddingErr)
+		} else {
+			retry.Message.Embedding = embedding
+		}
+		return sm.PutVersionedMessage(ctx, retry)
 	}
 
 	msg := prepared.Message

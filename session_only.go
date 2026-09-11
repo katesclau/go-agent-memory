@@ -30,6 +30,10 @@ func (sm *SessionOnlyMemory) AddMessage(ctx context.Context, msg Message) error 
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
 
+	return sm.addMessageLocked(msg)
+}
+
+func (sm *SessionOnlyMemory) addMessageLocked(msg Message) error {
 	sessionID := msg.Metadata.SessionID
 	if sessionID == "" {
 		return fmt.Errorf("session ID is required")
@@ -49,6 +53,79 @@ func (sm *SessionOnlyMemory) AddMessage(ctx context.Context, msg Message) error 
 	sm.updateStats(sessionID)
 
 	return nil
+}
+
+// PutVersionedMessage atomically advances one keyed fact in memory.
+func (sm *SessionOnlyMemory) PutVersionedMessage(
+	ctx context.Context,
+	req VersionedMessageRequest,
+) (VersionedMessageResult, error) {
+	prepared, err := prepareVersionRequest(req)
+	if err != nil {
+		return VersionedMessageResult{}, err
+	}
+
+	sm.mutex.Lock()
+	defer sm.mutex.Unlock()
+
+	var current Message
+	maxVersion := 0
+	for _, messages := range sm.sessions {
+		for _, msg := range messages {
+			info, ok := VersionInfo(msg)
+			if !ok || info.Namespace != prepared.Namespace || info.Key != prepared.Key {
+				continue
+			}
+			if info.Version > maxVersion {
+				maxVersion = info.Version
+			}
+			if isCurrentVersion(msg, prepared.EffectiveAt) {
+				currentInfo, hasCurrent := VersionInfo(current)
+				if !hasCurrent || info.Version > currentInfo.Version {
+					current = msg
+				}
+			}
+		}
+	}
+
+	if current.ID != "" {
+		info, _ := VersionInfo(current)
+		if info.Revision == prepared.Revision {
+			sm.supersedeVersionsLocked(prepared.Namespace, prepared.Key, current.ID, prepared.EffectiveAt)
+			return versionResult(current, true)
+		}
+	}
+
+	msg := prepared.Message
+	version := maxVersion + 1
+	if msg.ID == "" {
+		msg.ID = versionedMessageID(prepared.Namespace, prepared.Key, version)
+	}
+	info := VersionMetadata{
+		Namespace: prepared.Namespace, Key: prepared.Key, Revision: prepared.Revision,
+		Version: version, Status: versionStatusActive, ValidFrom: prepared.EffectiveAt,
+		SupersedesID: current.ID,
+	}
+	setVersionInfo(&msg, info)
+	sm.supersedeVersionsLocked(prepared.Namespace, prepared.Key, msg.ID, prepared.EffectiveAt)
+	if err := sm.addMessageLocked(msg); err != nil {
+		return VersionedMessageResult{}, err
+	}
+	return versionResult(msg, false)
+}
+
+func (sm *SessionOnlyMemory) supersedeVersionsLocked(namespace, key, keepID string, at time.Time) {
+	for sessionID, messages := range sm.sessions {
+		for i := range messages {
+			info, ok := VersionInfo(messages[i])
+			if !ok || info.Namespace != namespace || info.Key != key ||
+				messages[i].ID == keepID || !isCurrentVersion(messages[i], at) {
+				continue
+			}
+			supersedeMessage(&messages[i], at)
+		}
+		sm.sessions[sessionID] = messages
+	}
 }
 
 // GetRecentMessages retrieves recent messages from the session

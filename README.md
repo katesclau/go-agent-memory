@@ -395,6 +395,33 @@ embedding := []float32{0.1, 0.2, ...} // 1536 dimensions
 results, _ := mem.SearchWithEmbedding(ctx, embedding, 10, 0.8)
 ```
 
+### Store a Versioned Fact
+All implementations expose the optional `VersionedMemory` capability. It
+atomically replaces one logical fact while preserving prior versions.
+
+```go
+versioned := mem.(memory.VersionedMemory)
+result, err := versioned.PutVersionedMessage(ctx, memory.VersionedMessageRequest{
+    Message: memory.Message{
+        Role:    "system",
+        Content: "The request timeout is 10 seconds.",
+        Metadata: memory.Metadata{SessionID: "service-config"},
+    },
+    Namespace: "checkout-service",
+    Key:       "request-timeout",
+    Revision:  "sha256:7c9...",
+})
+if err != nil {
+    log.Fatal(err)
+}
+fmt.Printf("stored version %d (duplicate=%t)\n", result.Version, result.Duplicate)
+```
+
+`Namespace` and `Key` identify the fact, while `Revision` makes retries
+idempotent. PostgreSQL allocates versions under a transaction-scoped lock and
+commits the new row and prior-version closure atomically. Supply
+`Message.Embedding` to avoid an embedding request.
+
 ### Get Memory Statistics
 ```go
 stats, _ := mem.GetStats(ctx, "session-123")

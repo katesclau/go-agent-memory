@@ -73,6 +73,10 @@ func (hm *HybridMemory) AddMessage(ctx context.Context, msg Message) error {
 		fmt.Printf("Warning: failed to persist message to Supabase: %v\n", err)
 	}
 
+	return hm.cacheMessage(ctx, msg)
+}
+
+func (hm *HybridMemory) cacheMessage(ctx context.Context, msg Message) error {
 	// Add to Redis for fast session access
 	sessionKey := fmt.Sprintf("session:%s:messages", msg.Metadata.SessionID)
 
@@ -110,6 +114,23 @@ func (hm *HybridMemory) AddMessage(ctx context.Context, msg Message) error {
 	hm.redis.Expire(ctx, metaKey, hm.sessionTTL)
 
 	return nil
+}
+
+// PutVersionedMessage persists the version atomically before updating Redis.
+func (hm *HybridMemory) PutVersionedMessage(
+	ctx context.Context,
+	req VersionedMessageRequest,
+) (VersionedMessageResult, error) {
+	result, err := hm.supabase.PutVersionedMessage(ctx, req)
+	if err != nil {
+		return VersionedMessageResult{}, err
+	}
+	if !result.Duplicate {
+		if err := hm.cacheMessage(ctx, result.Message); err != nil {
+			fmt.Printf("Warning: failed to cache versioned message: %v\n", err)
+		}
+	}
+	return result, nil
 }
 
 // GetRecentMessages retrieves recent messages from Redis first, falls back to Supabase

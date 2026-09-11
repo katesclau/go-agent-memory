@@ -45,8 +45,7 @@ func (sm *SupabaseMemory) SearchMessages(
 	}
 	where = appendSearchClause(where, "embedding IS NOT NULL")
 	if req.TemporalPolicy == TemporalPolicyCurrentOnly {
-		where = appendSearchClause(where,
-			"lower(coalesce(metadata->'extra'->'_memory_version'->>'status', 'active')) <> 'superseded'")
+		where = appendSearchClause(where, "NOT ("+postgresHistoricalVersionPredicate()+")")
 	}
 	args = append(args, pgvector.NewVector(embedding), threshold, limit)
 	vectorArg := len(args) - 2
@@ -58,10 +57,8 @@ func (sm *SupabaseMemory) SearchMessages(
 	order := fmt.Sprintf("embedding <=> $%d::vector, created_at DESC, message_id ASC", vectorArg)
 	if req.TemporalPolicy == TemporalPolicyCurrentFirst {
 		order = fmt.Sprintf(`
-			CASE WHEN lower(coalesce(
-				metadata->'extra'->'_memory_version'->>'status', 'active'
-			)) = 'superseded' THEN 1 ELSE 0 END,
-			%s`, order)
+			CASE WHEN %s THEN 1 ELSE 0 END,
+			%s`, postgresHistoricalVersionPredicate(), order)
 	}
 	query := fmt.Sprintf(`
 		SELECT message_id, role, content, metadata, created_at,

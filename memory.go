@@ -83,6 +83,56 @@ type VersionMetadata struct {
 	SupersedesID string    `json:"supersedes_id,omitempty"`
 }
 
+// ManagedMemory is an optional capability for typed message inspection and
+// deletion without exposing a backend connection or storage schema.
+type ManagedMemory interface {
+	ListMessages(ctx context.Context, req ListMessagesRequest) ([]Message, error)
+	CountMessages(ctx context.Context, filter MessageFilter) (int64, error)
+	DeleteMessages(ctx context.Context, req DeleteMessagesRequest) (int64, error)
+}
+
+// TemporalState limits messages by their version lifecycle.
+type TemporalState string
+
+const (
+	TemporalStateAny        TemporalState = ""
+	TemporalStateCurrent    TemporalState = "current"
+	TemporalStateHistorical TemporalState = "historical"
+)
+
+// MessageFilter contains only parameterizable, backend-portable predicates.
+// ExtraEquals is matched against Metadata.Extra using exact values.
+type MessageFilter struct {
+	MessageIDs    []string               `json:"message_ids,omitempty"`
+	SessionID     string                 `json:"session_id,omitempty"`
+	UserID        string                 `json:"user_id,omitempty"`
+	ExtraEquals   map[string]interface{} `json:"extra_equals,omitempty"`
+	CreatedAfter  *time.Time             `json:"created_after,omitempty"`
+	CreatedBefore *time.Time             `json:"created_before,omitempty"`
+	TemporalState TemporalState          `json:"temporal_state,omitempty"`
+}
+
+// MessageOrder controls deterministic list ordering.
+type MessageOrder string
+
+const (
+	MessageOrderNewest MessageOrder = "newest"
+	MessageOrderOldest MessageOrder = "oldest"
+)
+
+type ListMessagesRequest struct {
+	Filter MessageFilter `json:"filter"`
+	Limit  int           `json:"limit,omitempty"`
+	Offset int           `json:"offset,omitempty"`
+	Order  MessageOrder  `json:"order,omitempty"`
+}
+
+// DeleteMessagesRequest requires an explicit filter unless AllowAll is true.
+type DeleteMessagesRequest struct {
+	Filter   MessageFilter `json:"filter"`
+	AllowAll bool          `json:"allow_all,omitempty"`
+}
+
 // Summary represents a conversation summary
 type Summary struct {
 	SessionID    string    `json:"session_id"`

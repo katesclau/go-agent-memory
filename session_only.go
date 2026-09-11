@@ -128,6 +128,89 @@ func (sm *SessionOnlyMemory) supersedeVersionsLocked(namespace, key, keepID stri
 	}
 }
 
+// ListMessages returns messages matching typed management filters.
+func (sm *SessionOnlyMemory) ListMessages(
+	ctx context.Context,
+	req ListMessagesRequest,
+) ([]Message, error) {
+	if err := validateListRequest(req); err != nil {
+		return nil, err
+	}
+	sm.mutex.RLock()
+	defer sm.mutex.RUnlock()
+
+	now := time.Now()
+	var messages []Message
+	for _, sessionMessages := range sm.sessions {
+		for _, msg := range sessionMessages {
+			if messageMatchesFilter(msg, req.Filter, now) {
+				messages = append(messages, msg)
+			}
+		}
+	}
+	sortMessages(messages, req.Order)
+	return paginateMessages(messages, req.Offset, req.Limit), nil
+}
+
+// CountMessages counts messages matching typed management filters.
+func (sm *SessionOnlyMemory) CountMessages(
+	ctx context.Context,
+	filter MessageFilter,
+) (int64, error) {
+	if err := validateMessageFilter(filter); err != nil {
+		return 0, err
+	}
+	sm.mutex.RLock()
+	defer sm.mutex.RUnlock()
+
+	now := time.Now()
+	var count int64
+	for _, messages := range sm.sessions {
+		for _, msg := range messages {
+			if messageMatchesFilter(msg, filter, now) {
+				count++
+			}
+		}
+	}
+	return count, nil
+}
+
+// DeleteMessages removes messages matching a typed filter.
+func (sm *SessionOnlyMemory) DeleteMessages(
+	ctx context.Context,
+	req DeleteMessagesRequest,
+) (int64, error) {
+	if err := validateMessageFilter(req.Filter); err != nil {
+		return 0, err
+	}
+	if emptyMessageFilter(req.Filter) && !req.AllowAll {
+		return 0, ErrDeleteFilterRequired
+	}
+	sm.mutex.Lock()
+	defer sm.mutex.Unlock()
+
+	now := time.Now()
+	var deleted int64
+	for sessionID, messages := range sm.sessions {
+		kept := messages[:0]
+		for _, msg := range messages {
+			if messageMatchesFilter(msg, req.Filter, now) {
+				deleted++
+				continue
+			}
+			kept = append(kept, msg)
+		}
+		if len(kept) == 0 {
+			delete(sm.sessions, sessionID)
+			delete(sm.stats, sessionID)
+			continue
+		}
+		sm.sessions[sessionID] = kept
+		sm.updateStats(sessionID)
+	}
+	return deleted, nil
+}
+
 // GetRecentMessages retrieves recent messages from the session
 func (sm *SessionOnlyMemory) GetRecentMessages(ctx context.Context, sessionID string, limit int) ([]Message, error) {
 	sm.mutex.RLock()

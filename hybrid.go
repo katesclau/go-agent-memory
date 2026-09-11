@@ -133,6 +133,36 @@ func (hm *HybridMemory) PutVersionedMessage(
 	return result, nil
 }
 
+func (hm *HybridMemory) ListMessages(
+	ctx context.Context,
+	req ListMessagesRequest,
+) ([]Message, error) {
+	return hm.supabase.ListMessages(ctx, req)
+}
+
+func (hm *HybridMemory) CountMessages(
+	ctx context.Context,
+	filter MessageFilter,
+) (int64, error) {
+	return hm.supabase.CountMessages(ctx, filter)
+}
+
+func (hm *HybridMemory) DeleteMessages(
+	ctx context.Context,
+	req DeleteMessagesRequest,
+) (int64, error) {
+	count, sessions, err := hm.supabase.deleteMessages(ctx, req)
+	if err != nil {
+		return 0, err
+	}
+	for _, sessionID := range sessions {
+		if err := hm.ClearCache(ctx, sessionID); err != nil {
+			fmt.Printf("Warning: failed to invalidate deleted message cache: %v\n", err)
+		}
+	}
+	return count, nil
+}
+
 // GetRecentMessages retrieves recent messages from Redis first, falls back to Supabase
 func (hm *HybridMemory) GetRecentMessages(ctx context.Context, sessionID string, limit int) ([]Message, error) {
 	if limit <= 0 {

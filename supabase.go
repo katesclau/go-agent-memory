@@ -85,6 +85,8 @@ func (sm *SupabaseMemory) initSchema(ctx context.Context) error {
 		CREATE INDEX IF NOT EXISTS idx_messages_session ON agent_messages(session_id);
 		CREATE INDEX IF NOT EXISTS idx_messages_user ON agent_messages(user_id);
 		CREATE INDEX IF NOT EXISTS idx_messages_created ON agent_messages(created_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_messages_extra ON agent_messages
+			USING gin ((metadata->'extra'));
 		CREATE INDEX IF NOT EXISTS idx_messages_version_scope ON agent_messages (
 			lower(coalesce(metadata->'extra'->'_memory_version'->>'namespace', '')),
 			lower(coalesce(metadata->'extra'->'_memory_version'->>'key', ''))

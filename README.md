@@ -422,6 +422,26 @@ idempotent. PostgreSQL allocates versions under a transaction-scoped lock and
 commits the new row and prior-version closure atomically. Supply
 `Message.Embedding` to avoid an embedding request.
 
+### Manage Messages with Typed Filters
+Use the optional `ManagedMemory` capability to inspect or remove records
+without accessing backend tables directly.
+
+```go
+managed := mem.(memory.ManagedMemory)
+messages, err := managed.ListMessages(ctx, memory.ListMessagesRequest{
+    Filter: memory.MessageFilter{
+        SessionID: "service-config",
+        ExtraEquals: map[string]interface{}{"environment": "qa"},
+        TemporalState: memory.TemporalStateCurrent,
+    },
+    Limit: 50,
+    Order: memory.MessageOrderNewest,
+})
+```
+
+The same filter works with `CountMessages` and `DeleteMessages`. Broad deletes
+are rejected unless `AllowAll` is explicitly set.
+
 ### Get Memory Statistics
 ```go
 stats, _ := mem.GetStats(ctx, "session-123")

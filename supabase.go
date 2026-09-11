@@ -66,6 +66,20 @@ func (sm *SupabaseMemory) initSchema(ctx context.Context) error {
 	schema := fmt.Sprintf(`
 		-- Enable pgvector extension
 		CREATE EXTENSION IF NOT EXISTS vector;
+
+		-- Parse caller-provided lifecycle timestamps without allowing malformed
+		-- legacy metadata to fail a query.
+		CREATE OR REPLACE FUNCTION agent_memory_try_timestamptz(value TEXT)
+		RETURNS TIMESTAMPTZ
+		LANGUAGE plpgsql
+		IMMUTABLE
+		AS $function$
+		BEGIN
+			RETURN value::TIMESTAMPTZ;
+		EXCEPTION WHEN others THEN
+			RETURN NULL;
+		END;
+		$function$;
 		
 		-- Create messages table
 		CREATE TABLE IF NOT EXISTS agent_messages (
@@ -237,6 +251,9 @@ func (sm *SupabaseMemory) PutVersionedMessage(
 
 	if current.ID != "" {
 		info, _ := VersionInfo(current)
+		if prepared.EffectiveAt.Before(info.ValidFrom) {
+			return VersionedMessageResult{}, ErrVersionEffectiveAtBeforeCurrent
+		}
 		if info.Revision == prepared.Revision {
 			if err := supersedeOtherVersions(ctx, tx, prepared.Namespace, prepared.Key, current.ID, prepared.EffectiveAt); err != nil {
 				return VersionedMessageResult{}, err

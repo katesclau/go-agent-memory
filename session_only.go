@@ -90,6 +90,9 @@ func (sm *SessionOnlyMemory) PutVersionedMessage(
 
 	if current.ID != "" {
 		info, _ := VersionInfo(current)
+		if prepared.EffectiveAt.Before(info.ValidFrom) {
+			return VersionedMessageResult{}, ErrVersionEffectiveAtBeforeCurrent
+		}
 		if info.Revision == prepared.Revision {
 			sm.supersedeVersionsLocked(prepared.Namespace, prepared.Key, current.ID, prepared.EffectiveAt)
 			return versionResult(current, true)

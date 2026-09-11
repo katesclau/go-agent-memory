@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -92,6 +93,36 @@ func TestSessionOnlyVersionedMessageConcurrentWriters(t *testing.T) {
 	}
 	if len(messages) != 1 {
 		t.Fatalf("messages = %d, want 1", len(messages))
+	}
+}
+
+func TestSessionOnlyRejectsFutureAndBackdatedVersions(t *testing.T) {
+	raw, err := NewSessionOnlyMemory(Config{MaxSessionMessages: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	versioned := raw.(VersionedMemory)
+	request := VersionedMessageRequest{
+		Message: Message{
+			Role: "system", Content: "value",
+			Metadata: Metadata{SessionID: "session"},
+		},
+		Namespace: "namespace", Key: "key", Revision: "first",
+		EffectiveAt: time.Now().Add(-time.Hour),
+	}
+	if _, err := versioned.PutVersionedMessage(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+
+	request.Revision = "backdated"
+	request.EffectiveAt = time.Now().Add(-2 * time.Hour)
+	if _, err := versioned.PutVersionedMessage(context.Background(), request); !errors.Is(err, ErrVersionEffectiveAtBeforeCurrent) {
+		t.Fatalf("backdated error = %v", err)
+	}
+	request.Revision = "future"
+	request.EffectiveAt = time.Now().Add(time.Hour)
+	if _, err := versioned.PutVersionedMessage(context.Background(), request); !errors.Is(err, ErrVersionEffectiveAtFuture) {
+		t.Fatalf("future error = %v", err)
 	}
 }
 

@@ -153,15 +153,27 @@ func postgresMessageFilter(filter MessageFilter) (string, []interface{}, error) 
 	}
 	switch filter.TemporalState {
 	case TemporalStateCurrent:
-		clauses = append(clauses,
-			"lower(coalesce(metadata->'extra'->'_memory_version'->>'status', 'active')) <> 'superseded'")
+		clauses = append(clauses, "NOT ("+postgresHistoricalVersionPredicate()+")")
 	case TemporalStateHistorical:
-		clauses = append(clauses,
-			"metadata->'extra'->'_memory_version' IS NOT NULL",
-			"lower(coalesce(metadata->'extra'->'_memory_version'->>'status', 'active')) = 'superseded'")
+		clauses = append(clauses, postgresHistoricalVersionPredicate())
 	}
 	if len(clauses) == 0 {
 		return "", args, nil
 	}
 	return "WHERE " + strings.Join(clauses, " AND "), args, nil
+}
+
+func postgresHistoricalVersionPredicate() string {
+	const version = "metadata->'extra'->'_memory_version'"
+	return fmt.Sprintf(`(
+		jsonb_typeof(%[1]s) = 'object'
+		AND nullif(%[1]s->>'namespace', '') IS NOT NULL
+		AND nullif(%[1]s->>'key', '') IS NOT NULL
+		AND nullif(%[1]s->>'revision', '') IS NOT NULL
+		AND (%[1]s->>'version') ~ '^[1-9][0-9]*$'
+		AND (
+			lower(coalesce(%[1]s->>'status', 'active')) = 'superseded'
+			OR agent_memory_try_timestamptz(%[1]s->>'valid_until') <= CURRENT_TIMESTAMP
+		)
+	)`, version)
 }

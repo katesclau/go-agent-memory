@@ -1,6 +1,8 @@
 package memory
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"sort"
@@ -62,7 +64,7 @@ func messageMatchesFilter(msg Message, filter MessageFilter, now time.Time) bool
 		return false
 	}
 	for key, expected := range filter.ExtraEquals {
-		if msg.Metadata.Extra == nil || !reflect.DeepEqual(msg.Metadata.Extra[key], expected) {
+		if msg.Metadata.Extra == nil || !jsonSemanticEqual(msg.Metadata.Extra[key], expected) {
 			return false
 		}
 	}
@@ -83,6 +85,15 @@ func messageMatchesFilter(msg Message, filter MessageFilter, now time.Time) bool
 		}
 	}
 	return true
+}
+
+func jsonSemanticEqual(left, right interface{}) bool {
+	leftJSON, leftErr := json.Marshal(left)
+	rightJSON, rightErr := json.Marshal(right)
+	if leftErr != nil || rightErr != nil {
+		return reflect.DeepEqual(left, right)
+	}
+	return bytes.Equal(leftJSON, rightJSON)
 }
 
 func sortMessages(messages []Message, order MessageOrder) {

@@ -90,3 +90,31 @@ func TestSessionOnlyManagedMemoryTemporalStateAndDeleteGuard(t *testing.T) {
 		t.Fatalf("deleted = %d, want 1", deleted)
 	}
 }
+
+func TestSessionOnlyManagedMemoryUsesJSONEquality(t *testing.T) {
+	raw, err := NewSessionOnlyMemory(Config{MaxSessionMessages: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.AddMessage(context.Background(), Message{
+		ID: "json", Role: "system", Content: "json",
+		Metadata: Metadata{
+			SessionID: "session",
+			Extra: map[string]interface{}{
+				"number": 1,
+				"nested": map[string]interface{}{"values": []interface{}{"a", float64(2)}},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	count, err := raw.(ManagedMemory).CountMessages(context.Background(), MessageFilter{
+		ExtraEquals: map[string]interface{}{
+			"number": float64(1),
+			"nested": map[string]interface{}{"values": []interface{}{"a", 2}},
+		},
+	})
+	if err != nil || count != 1 {
+		t.Fatalf("count = %d, err = %v", count, err)
+	}
+}

@@ -32,7 +32,7 @@ func TestPostgresManagedMemoryRoundTrip(t *testing.T) {
 		if err := mem.AddMessage(ctx, Message{
 			ID: fmt.Sprintf("%s-%d", tag, index), Role: "system",
 			Content: fmt.Sprintf("message-%d", index), Timestamp: time.Now().Add(time.Duration(index) * time.Second),
-			Metadata:  Metadata{SessionID: tag, Extra: map[string]interface{}{"test_tag": tag}},
+			Metadata:  Metadata{SessionID: tag, Extra: map[string]interface{}{"test_tag": tag, "number": 1}},
 			Embedding: embedding,
 		}); err != nil {
 			t.Fatal(err)
@@ -52,8 +52,57 @@ func TestPostgresManagedMemoryRoundTrip(t *testing.T) {
 	if err != nil || count != 2 {
 		t.Fatalf("count = %d, err = %v", count, err)
 	}
+	count, err = mem.CountMessages(ctx, MessageFilter{
+		ExtraEquals: map[string]interface{}{"test_tag": tag, "number": float64(1)},
+	})
+	if err != nil || count != 2 {
+		t.Fatalf("JSON numeric count = %d, err = %v", count, err)
+	}
+
+	for _, msg := range []Message{
+		{
+			ID: tag + "-malformed", Role: "system", Content: "malformed",
+			Timestamp: time.Now(), Embedding: make([]float32, 1536),
+			Metadata: Metadata{SessionID: tag, Extra: map[string]interface{}{
+				"test_tag": tag,
+				versionMetadataKey: map[string]interface{}{
+					"namespace": tag, "key": "malformed", "version": 1,
+					"status": versionStatusSuperseded,
+				},
+			}},
+		},
+		{
+			ID: tag + "-expired", Role: "system", Content: "expired",
+			Timestamp: time.Now(), Embedding: make([]float32, 1536),
+			Metadata: Metadata{SessionID: tag, Extra: map[string]interface{}{
+				"test_tag": tag,
+				versionMetadataKey: map[string]interface{}{
+					"namespace": tag, "key": "expired", "revision": "one", "version": 1,
+					"status":      versionStatusActive,
+					"valid_from":  time.Now().Add(-2 * time.Hour).Format(time.RFC3339Nano),
+					"valid_until": time.Now().Add(-time.Hour).Format(time.RFC3339Nano),
+				},
+			}},
+		},
+	} {
+		if err := mem.AddMessage(ctx, msg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	current, err := mem.CountMessages(ctx, MessageFilter{
+		ExtraEquals: filter.ExtraEquals, TemporalState: TemporalStateCurrent,
+	})
+	if err != nil || current != 3 {
+		t.Fatalf("current count = %d, err = %v", current, err)
+	}
+	historical, err := mem.CountMessages(ctx, MessageFilter{
+		ExtraEquals: filter.ExtraEquals, TemporalState: TemporalStateHistorical,
+	})
+	if err != nil || historical != 1 {
+		t.Fatalf("historical count = %d, err = %v", historical, err)
+	}
 	deleted, err := mem.DeleteMessages(ctx, DeleteMessagesRequest{Filter: filter})
-	if err != nil || deleted != 2 {
+	if err != nil || deleted != 4 {
 		t.Fatalf("deleted = %d, err = %v", deleted, err)
 	}
 }

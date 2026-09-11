@@ -144,6 +144,11 @@ func TestVersionInfoRejectsFractionalVersion(t *testing.T) {
 	if _, ok := VersionInfo(msg); ok {
 		t.Fatal("fractional version metadata was accepted")
 	}
+	msg.Metadata.Extra[versionMetadataKey].(map[string]interface{})["version"] =
+		"999999999999999999999999999999999999"
+	if _, ok := VersionInfo(msg); ok {
+		t.Fatal("overflowing version metadata was accepted")
+	}
 }
 
 func putTestVersion(

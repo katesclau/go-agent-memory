@@ -145,6 +145,13 @@ func postgresMessageFilter(filter MessageFilter) (string, []interface{}, error) 
 		}
 		add("coalesce(metadata->'extra', '{}'::jsonb) @> $%d::jsonb", encoded)
 	}
+	for key, forbidden := range filter.ExtraNotEquals {
+		encoded, err := json.Marshal(map[string]interface{}{key: forbidden})
+		if err != nil {
+			return "", nil, fmt.Errorf("encode excluded extra metadata filter: %w", err)
+		}
+		add("NOT (coalesce(metadata->'extra', '{}'::jsonb) @> $%d::jsonb)", encoded)
+	}
 	for key, value := range filter.ExtraEqualFold {
 		args = append(args, key, value)
 		clauses = append(clauses, fmt.Sprintf(

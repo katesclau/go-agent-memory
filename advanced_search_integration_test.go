@@ -69,4 +69,14 @@ func TestPostgresSearchMessagesFiltersBeforeCurrentFirstLimit(t *testing.T) {
 	if len(results) != 1 || results[0].Message.ID != second.Message.ID {
 		t.Fatalf("current-only results = %#v", results)
 	}
+	results, err = mem.SearchMessages(ctx, SearchMessagesRequest{
+		Query: "current", Mode: SearchModeKeyword, Limit: 10, Filter: filter,
+		TemporalPolicy: TemporalPolicyCurrentOnly,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Message.ID != second.Message.ID {
+		t.Fatalf("keyword current-only results = %#v", results)
+	}
 }

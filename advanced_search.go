@@ -18,7 +18,12 @@ func validateSearchRequest(req SearchMessagesRequest) error {
 	if err := validateMessageFilter(req.Filter); err != nil {
 		return err
 	}
-	if strings.TrimSpace(req.Query) == "" && len(req.Embedding) == 0 {
+	switch req.Mode {
+	case SearchModeSemantic, SearchModeKeyword:
+	default:
+		return errors.New("invalid search mode")
+	}
+	if strings.TrimSpace(req.Query) == "" && (len(req.Embedding) == 0 || req.Mode == SearchModeKeyword) {
 		return ErrSearchInputRequired
 	}
 	if req.Limit < 0 {
@@ -39,7 +44,7 @@ func (sm *SessionOnlyMemory) SearchMessages(
 	if err := validateSearchRequest(req); err != nil {
 		return nil, err
 	}
-	if len(req.Embedding) > 0 {
+	if req.Mode != SearchModeKeyword && len(req.Embedding) > 0 {
 		return nil, errors.New("embedding search is not supported in session-only mode")
 	}
 	limit := req.Limit
@@ -92,7 +97,7 @@ func lexicalSearchScore(content, normalizedQuery string) float32 {
 	if strings.Contains(content, normalizedQuery) {
 		return 0.9
 	}
-	queryWords := strings.Fields(normalizedQuery)
+	queryWords := keywordWords(normalizedQuery)
 	if len(queryWords) == 0 {
 		return 0
 	}

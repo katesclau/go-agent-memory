@@ -46,6 +46,7 @@ func emptyMessageFilter(filter MessageFilter) bool {
 		strings.TrimSpace(filter.SessionID) == "" &&
 		strings.TrimSpace(filter.UserID) == "" &&
 		len(filter.ExtraEquals) == 0 &&
+		len(filter.ExtraNotEquals) == 0 &&
 		len(filter.ExtraEqualFold) == 0 &&
 		filter.CreatedAfter == nil &&
 		filter.CreatedBefore == nil &&
@@ -66,6 +67,12 @@ func messageMatchesFilter(msg Message, filter MessageFilter, now time.Time) bool
 	}
 	for key, expected := range filter.ExtraEquals {
 		if msg.Metadata.Extra == nil || !jsonSemanticEqual(msg.Metadata.Extra[key], expected) {
+			return false
+		}
+	}
+	for key, forbidden := range filter.ExtraNotEquals {
+		value, exists := msg.Metadata.Extra[key]
+		if exists && jsonSemanticEqual(value, forbidden) {
 			return false
 		}
 	}

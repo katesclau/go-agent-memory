@@ -97,3 +97,45 @@ func TestSessionOnlySearchTreatsMalformedVersionMetadataAsCurrent(t *testing.T) 
 		t.Fatalf("results = %#v", results)
 	}
 }
+
+func TestSessionOnlyKeywordSearchRanksOverlapAndAppliesFilters(t *testing.T) {
+	raw, err := NewSessionOnlyMemory(Config{
+		MaxSessionMessages: 10, DefaultSearchLimit: 5, DefaultSearchThreshold: 0.1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, msg := range []Message{
+		{
+			ID: "one", Role: "system", Content: "timeout",
+			Metadata: Metadata{SessionID: "session"},
+		},
+		{
+			ID: "two", Role: "system", Content: "startup timeout",
+			Metadata: Metadata{SessionID: "session"},
+		},
+		{
+			ID: "document", Role: "system", Content: "startup timeout",
+			Metadata: Metadata{
+				SessionID: "session",
+				Extra:     map[string]interface{}{"record_type": "document_chunk"},
+			},
+		},
+	} {
+		if err := raw.AddMessage(context.Background(), msg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	results, err := raw.(SearchableMemory).SearchMessages(context.Background(), SearchMessagesRequest{
+		Query: "startup timeout?", Mode: SearchModeKeyword, Limit: 1, Threshold: 0.1,
+		Filter: MessageFilter{
+			ExtraNotEquals: map[string]interface{}{"record_type": "document_chunk"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Message.ID != "two" {
+		t.Fatalf("results = %#v", results)
+	}
+}

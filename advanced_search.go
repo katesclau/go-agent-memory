@@ -80,6 +80,9 @@ func (sm *SessionOnlyMemory) SearchMessages(
 			score := lexicalSearchScore(msg.Content, query)
 			if req.Mode == SearchModeKeyword {
 				score = keywordOverlapScore(msg.Content, query)
+				if score == 0 {
+					continue
+				}
 			}
 			if score < threshold {
 				continue

@@ -121,6 +121,10 @@ func TestSessionOnlyKeywordSearchRanksOverlapAndAppliesFilters(t *testing.T) {
 				Extra:     map[string]interface{}{"record_type": "document_chunk"},
 			},
 		},
+		{
+			ID: "unrelated", Role: "system", Content: "database retries",
+			Metadata: Metadata{SessionID: "session"},
+		},
 	} {
 		if err := raw.AddMessage(context.Background(), msg); err != nil {
 			t.Fatal(err)

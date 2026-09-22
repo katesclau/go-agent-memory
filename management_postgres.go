@@ -191,7 +191,7 @@ func postgresHistoricalPredicate(filter MessageFilter) string {
 
 func postgresFlatHistoricalPredicate() string {
 	return `(
-		lower(coalesce(metadata->'extra'->>'status', '')) = 'superseded'
+		lower(btrim(coalesce(metadata->'extra'->>'status', ''))) = 'superseded'
 		OR agent_memory_try_timestamptz(metadata->'extra'->>'valid_until') <= CURRENT_TIMESTAMP
 	)`
 }

@@ -167,6 +167,15 @@ func TestSessionOnlyExtraNotEqualsKeepsMissingMetadata(t *testing.T) {
 				Extra:     map[string]interface{}{"record_type": "document_chunk"},
 			},
 		},
+		{
+			ID: "expired", Role: "system", Content: "expired",
+			Metadata: Metadata{
+				SessionID: "session",
+				Extra: map[string]interface{}{
+					"valid_until": time.Now().Add(-time.Hour).Format(time.RFC3339Nano),
+				},
+			},
+		},
 	} {
 		if err := raw.AddMessage(context.Background(), msg); err != nil {
 			t.Fatal(err)
@@ -174,7 +183,9 @@ func TestSessionOnlyExtraNotEqualsKeepsMissingMetadata(t *testing.T) {
 	}
 	messages, err := raw.(ManagedMemory).ListMessages(context.Background(), ListMessagesRequest{
 		Filter: MessageFilter{
-			ExtraNotEquals: map[string]interface{}{"record_type": "document_chunk"},
+			ExtraNotEquals:      map[string]interface{}{"record_type": "document_chunk"},
+			TemporalState:       TemporalStateCurrent,
+			IncludeFlatTemporal: true,
 		},
 	})
 	if err != nil {

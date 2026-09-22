@@ -103,15 +103,16 @@ const (
 // MessageFilter contains only parameterizable, backend-portable predicates.
 // ExtraEquals is matched against Metadata.Extra using exact values.
 type MessageFilter struct {
-	MessageIDs     []string               `json:"message_ids,omitempty"`
-	SessionID      string                 `json:"session_id,omitempty"`
-	UserID         string                 `json:"user_id,omitempty"`
-	ExtraEquals    map[string]interface{} `json:"extra_equals,omitempty"`
-	ExtraNotEquals map[string]interface{} `json:"extra_not_equals,omitempty"`
-	ExtraEqualFold map[string]string      `json:"extra_equal_fold,omitempty"`
-	CreatedAfter   *time.Time             `json:"created_after,omitempty"`
-	CreatedBefore  *time.Time             `json:"created_before,omitempty"`
-	TemporalState  TemporalState          `json:"temporal_state,omitempty"`
+	MessageIDs          []string               `json:"message_ids,omitempty"`
+	SessionID           string                 `json:"session_id,omitempty"`
+	UserID              string                 `json:"user_id,omitempty"`
+	ExtraEquals         map[string]interface{} `json:"extra_equals,omitempty"`
+	ExtraNotEquals      map[string]interface{} `json:"extra_not_equals,omitempty"`
+	ExtraEqualFold      map[string]string      `json:"extra_equal_fold,omitempty"`
+	CreatedAfter        *time.Time             `json:"created_after,omitempty"`
+	CreatedBefore       *time.Time             `json:"created_before,omitempty"`
+	TemporalState       TemporalState          `json:"temporal_state,omitempty"`
+	IncludeFlatTemporal bool                   `json:"include_flat_temporal,omitempty"`
 }
 
 // MessageOrder controls deterministic list ordering.

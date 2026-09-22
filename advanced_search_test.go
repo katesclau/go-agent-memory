@@ -127,7 +127,7 @@ func TestSessionOnlyKeywordSearchRanksOverlapAndAppliesFilters(t *testing.T) {
 		}
 	}
 	results, err := raw.(SearchableMemory).SearchMessages(context.Background(), SearchMessagesRequest{
-		Query: "startup timeout?", Mode: SearchModeKeyword, Limit: 1, Threshold: 0.1,
+		Query: "startup timeout?", Mode: SearchModeKeyword, Limit: 10, Threshold: 0.95,
 		Filter: MessageFilter{
 			ExtraNotEquals: map[string]interface{}{"record_type": "document_chunk"},
 		},
@@ -135,7 +135,7 @@ func TestSessionOnlyKeywordSearchRanksOverlapAndAppliesFilters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(results) != 1 || results[0].Message.ID != "two" {
+	if len(results) != 2 || results[0].Message.ID != "two" || results[1].Message.ID != "one" {
 		t.Fatalf("results = %#v", results)
 	}
 }

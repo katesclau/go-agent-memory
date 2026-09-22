@@ -55,7 +55,9 @@ func (sm *SessionOnlyMemory) SearchMessages(
 		}
 	}
 	threshold := req.Threshold
-	if threshold <= 0 {
+	if req.Mode == SearchModeKeyword {
+		threshold = 0
+	} else if threshold <= 0 {
 		threshold = sm.config.DefaultSearchThreshold
 		if threshold <= 0 {
 			threshold = 0.7
@@ -76,6 +78,9 @@ func (sm *SessionOnlyMemory) SearchMessages(
 				continue
 			}
 			score := lexicalSearchScore(msg.Content, query)
+			if req.Mode == SearchModeKeyword {
+				score = keywordOverlapScore(msg.Content, query)
+			}
 			if score < threshold {
 				continue
 			}
@@ -87,6 +92,21 @@ func (sm *SessionOnlyMemory) SearchMessages(
 		results = results[:limit]
 	}
 	return results, nil
+}
+
+func keywordOverlapScore(content, normalizedQuery string) float32 {
+	queryWords := keywordWords(normalizedQuery)
+	if len(queryWords) == 0 {
+		return 0
+	}
+	content = strings.ToLower(content)
+	matches := 0
+	for _, word := range queryWords {
+		if strings.Contains(content, word) {
+			matches++
+		}
+	}
+	return float32(matches) / float32(len(queryWords))
 }
 
 func lexicalSearchScore(content, normalizedQuery string) float32 {

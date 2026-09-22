@@ -90,15 +90,43 @@ func messageMatchesFilter(msg Message, filter MessageFilter, now time.Time) bool
 	}
 	switch filter.TemporalState {
 	case TemporalStateCurrent:
-		if !isCurrentVersion(msg, now) {
+		flatCurrent, _ := flatTemporalState(msg, now)
+		if !isCurrentVersion(msg, now) || (filter.IncludeFlatTemporal && !flatCurrent) {
 			return false
 		}
 	case TemporalStateHistorical:
-		if _, versioned := VersionInfo(msg); !versioned || isCurrentVersion(msg, now) {
+		_, versioned := VersionInfo(msg)
+		flatCurrent, flatVersioned := flatTemporalState(msg, now)
+		current := isCurrentVersion(msg, now)
+		if filter.IncludeFlatTemporal {
+			current = current && flatCurrent
+			versioned = versioned || flatVersioned
+		}
+		if !versioned || current {
 			return false
 		}
 	}
 	return true
+}
+
+func flatTemporalState(msg Message, now time.Time) (current, recognized bool) {
+	if msg.Metadata.Extra == nil {
+		return true, false
+	}
+	status, hasStatus := msg.Metadata.Extra["status"].(string)
+	validUntil, hasValidUntil := msg.Metadata.Extra["valid_until"].(string)
+	recognized = hasStatus || hasValidUntil
+	if strings.EqualFold(strings.TrimSpace(status), versionStatusSuperseded) {
+		return false, recognized
+	}
+	if !hasValidUntil || strings.TrimSpace(validUntil) == "" {
+		return true, recognized
+	}
+	parsed, ok := parseVersionTime(validUntil)
+	if !ok {
+		return true, recognized
+	}
+	return parsed.After(now), recognized
 }
 
 func jsonSemanticEqual(left, right interface{}) bool {

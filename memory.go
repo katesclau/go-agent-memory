@@ -107,6 +107,7 @@ type MessageFilter struct {
 	SessionID      string                 `json:"session_id,omitempty"`
 	UserID         string                 `json:"user_id,omitempty"`
 	ExtraEquals    map[string]interface{} `json:"extra_equals,omitempty"`
+	ExtraNotEquals map[string]interface{} `json:"extra_not_equals,omitempty"`
 	ExtraEqualFold map[string]string      `json:"extra_equal_fold,omitempty"`
 	CreatedAfter   *time.Time             `json:"created_after,omitempty"`
 	CreatedBefore  *time.Time             `json:"created_before,omitempty"`
@@ -140,6 +141,13 @@ type SearchableMemory interface {
 	SearchMessages(ctx context.Context, req SearchMessagesRequest) ([]SearchResult, error)
 }
 
+type SearchMode string
+
+const (
+	SearchModeSemantic SearchMode = ""
+	SearchModeKeyword  SearchMode = "keyword"
+)
+
 // TemporalPolicy controls version eligibility and ordering during search.
 type TemporalPolicy string
 
@@ -154,6 +162,7 @@ const (
 type SearchMessagesRequest struct {
 	Query          string         `json:"query,omitempty"`
 	Embedding      []float32      `json:"embedding,omitempty"`
+	Mode           SearchMode     `json:"mode,omitempty"`
 	Limit          int            `json:"limit,omitempty"`
 	Threshold      float32        `json:"threshold,omitempty"`
 	Filter         MessageFilter  `json:"filter"`

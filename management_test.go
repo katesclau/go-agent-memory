@@ -149,3 +149,38 @@ func TestSessionOnlyTreatsOverflowingVersionAsLegacyCurrent(t *testing.T) {
 		t.Fatalf("current count = %d, err = %v", current, err)
 	}
 }
+
+func TestSessionOnlyExtraNotEqualsKeepsMissingMetadata(t *testing.T) {
+	raw, err := NewSessionOnlyMemory(Config{MaxSessionMessages: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, msg := range []Message{
+		{
+			ID: "legacy", Role: "system", Content: "legacy",
+			Metadata: Metadata{SessionID: "session"},
+		},
+		{
+			ID: "document", Role: "system", Content: "document",
+			Metadata: Metadata{
+				SessionID: "session",
+				Extra:     map[string]interface{}{"record_type": "document_chunk"},
+			},
+		},
+	} {
+		if err := raw.AddMessage(context.Background(), msg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	messages, err := raw.(ManagedMemory).ListMessages(context.Background(), ListMessagesRequest{
+		Filter: MessageFilter{
+			ExtraNotEquals: map[string]interface{}{"record_type": "document_chunk"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 1 || messages[0].ID != "legacy" {
+		t.Fatalf("messages = %#v", messages)
+	}
+}

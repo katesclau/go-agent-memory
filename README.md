@@ -461,7 +461,11 @@ results, err := searchable.SearchMessages(ctx, memory.SearchMessagesRequest{
 
 Use `TemporalPolicyCurrentOnly` for ordinary fact recall,
 `TemporalPolicyCurrentFirst` when returning history with current facts first,
-or `TemporalPolicyAllVersions` to rank only by relevance.
+or `TemporalPolicyAllVersions` to rank only by relevance. Set
+`Mode: memory.SearchModeKeyword` to apply substring overlap ranking and the
+result limit in storage without generating an embedding. `ExtraNotEquals`
+filters exclude explicit metadata values while retaining rows where the key is
+absent.
 
 ### Get Memory Statistics
 ```go

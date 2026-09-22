@@ -49,7 +49,7 @@ func (sm *SupabaseMemory) SearchMessages(
 	}
 	where = appendSearchClause(where, "embedding IS NOT NULL")
 	if req.TemporalPolicy == TemporalPolicyCurrentOnly {
-		where = appendSearchClause(where, "NOT ("+postgresHistoricalVersionPredicate()+")")
+		where = appendSearchClause(where, "NOT ("+postgresHistoricalPredicate(req.Filter)+")")
 	}
 	args = append(args, pgvector.NewVector(embedding), threshold, limit)
 	vectorArg := len(args) - 2
@@ -62,7 +62,7 @@ func (sm *SupabaseMemory) SearchMessages(
 	if req.TemporalPolicy == TemporalPolicyCurrentFirst {
 		order = fmt.Sprintf(`
 			CASE WHEN %s THEN 1 ELSE 0 END,
-			%s`, postgresHistoricalVersionPredicate(), order)
+			%s`, postgresHistoricalPredicate(req.Filter), order)
 	}
 	query := fmt.Sprintf(`
 		SELECT message_id, role, content, metadata, created_at,
@@ -122,7 +122,7 @@ func (sm *SupabaseMemory) searchKeywordMessages(
 		return nil, err
 	}
 	if req.TemporalPolicy == TemporalPolicyCurrentOnly {
-		where = appendSearchClause(where, "NOT ("+postgresHistoricalVersionPredicate()+")")
+		where = appendSearchClause(where, "NOT ("+postgresHistoricalPredicate(req.Filter)+")")
 	}
 	args = append(args, words)
 	wordsArg := len(args)
@@ -139,7 +139,7 @@ func (sm *SupabaseMemory) searchKeywordMessages(
 	if req.TemporalPolicy == TemporalPolicyCurrentFirst {
 		order = fmt.Sprintf(
 			"CASE WHEN %s THEN 1 ELSE 0 END, %s",
-			postgresHistoricalVersionPredicate(), order,
+			postgresHistoricalPredicate(req.Filter), order,
 		)
 	}
 	query := fmt.Sprintf(`

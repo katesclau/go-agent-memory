@@ -146,11 +146,15 @@ func postgresMessageFilter(filter MessageFilter) (string, []interface{}, error) 
 		add("coalesce(metadata->'extra', '{}'::jsonb) @> $%d::jsonb", encoded)
 	}
 	for key, forbidden := range filter.ExtraNotEquals {
-		encoded, err := json.Marshal(map[string]interface{}{key: forbidden})
+		encoded, err := json.Marshal(forbidden)
 		if err != nil {
 			return "", nil, fmt.Errorf("encode excluded extra metadata filter: %w", err)
 		}
-		add("NOT (coalesce(metadata->'extra', '{}'::jsonb) @> $%d::jsonb)", encoded)
+		args = append(args, key, encoded)
+		clauses = append(clauses, fmt.Sprintf(
+			"NOT (coalesce(metadata->'extra', '{}'::jsonb) ? $%d AND metadata->'extra'->$%d = $%d::jsonb)",
+			len(args)-1, len(args)-1, len(args),
+		))
 	}
 	for key, value := range filter.ExtraEqualFold {
 		args = append(args, key, value)
@@ -167,14 +171,29 @@ func postgresMessageFilter(filter MessageFilter) (string, []interface{}, error) 
 	}
 	switch filter.TemporalState {
 	case TemporalStateCurrent:
-		clauses = append(clauses, "NOT ("+postgresHistoricalVersionPredicate()+")")
+		clauses = append(clauses, "NOT ("+postgresHistoricalPredicate(filter)+")")
 	case TemporalStateHistorical:
-		clauses = append(clauses, postgresHistoricalVersionPredicate())
+		clauses = append(clauses, postgresHistoricalPredicate(filter))
 	}
 	if len(clauses) == 0 {
 		return "", args, nil
 	}
 	return "WHERE " + strings.Join(clauses, " AND "), args, nil
+}
+
+func postgresHistoricalPredicate(filter MessageFilter) string {
+	versioned := postgresHistoricalVersionPredicate()
+	if !filter.IncludeFlatTemporal {
+		return versioned
+	}
+	return "(" + versioned + " OR " + postgresFlatHistoricalPredicate() + ")"
+}
+
+func postgresFlatHistoricalPredicate() string {
+	return `(
+		lower(coalesce(metadata->'extra'->>'status', '')) = 'superseded'
+		OR agent_memory_try_timestamptz(metadata->'extra'->>'valid_until') <= CURRENT_TIMESTAMP
+	)`
 }
 
 func postgresHistoricalVersionPredicate() string {

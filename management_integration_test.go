@@ -103,6 +103,14 @@ func TestPostgresManagedMemoryRoundTrip(t *testing.T) {
 				},
 			}},
 		},
+		{
+			ID: tag + "-flat-expired", Role: "system", Content: "flat expired",
+			Timestamp: time.Now(), Embedding: make([]float32, 1536),
+			Metadata: Metadata{SessionID: tag, Extra: map[string]interface{}{
+				"test_tag":    tag,
+				"valid_until": time.Now().Add(-time.Hour).Format(time.RFC3339Nano),
+			}},
+		},
 	} {
 		if err := mem.AddMessage(ctx, msg); err != nil {
 			t.Fatal(err)
@@ -111,7 +119,7 @@ func TestPostgresManagedMemoryRoundTrip(t *testing.T) {
 	current, err := mem.CountMessages(ctx, MessageFilter{
 		ExtraEquals: filter.ExtraEquals, TemporalState: TemporalStateCurrent,
 	})
-	if err != nil || current != 4 {
+	if err != nil || current != 5 {
 		t.Fatalf("current count = %d, err = %v", current, err)
 	}
 	historical, err := mem.CountMessages(ctx, MessageFilter{
@@ -120,8 +128,15 @@ func TestPostgresManagedMemoryRoundTrip(t *testing.T) {
 	if err != nil || historical != 1 {
 		t.Fatalf("historical count = %d, err = %v", historical, err)
 	}
+	current, err = mem.CountMessages(ctx, MessageFilter{
+		ExtraEquals: filter.ExtraEquals, TemporalState: TemporalStateCurrent,
+		IncludeFlatTemporal: true,
+	})
+	if err != nil || current != 4 {
+		t.Fatalf("flat-aware current count = %d, err = %v", current, err)
+	}
 	deleted, err := mem.DeleteMessages(ctx, DeleteMessagesRequest{Filter: filter})
-	if err != nil || deleted != 5 {
+	if err != nil || deleted != 6 {
 		t.Fatalf("deleted = %d, err = %v", deleted, err)
 	}
 }

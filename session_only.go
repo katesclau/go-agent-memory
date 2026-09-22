@@ -30,6 +30,10 @@ func (sm *SessionOnlyMemory) AddMessage(ctx context.Context, msg Message) error 
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
 
+	return sm.addMessageLocked(msg)
+}
+
+func (sm *SessionOnlyMemory) addMessageLocked(msg Message) error {
 	sessionID := msg.Metadata.SessionID
 	if sessionID == "" {
 		return fmt.Errorf("session ID is required")
@@ -49,6 +53,171 @@ func (sm *SessionOnlyMemory) AddMessage(ctx context.Context, msg Message) error 
 	sm.updateStats(sessionID)
 
 	return nil
+}
+
+// PutVersionedMessage atomically advances one keyed fact in memory.
+func (sm *SessionOnlyMemory) PutVersionedMessage(
+	ctx context.Context,
+	req VersionedMessageRequest,
+) (VersionedMessageResult, error) {
+	prepared, err := prepareVersionRequest(req)
+	if err != nil {
+		return VersionedMessageResult{}, err
+	}
+
+	sm.mutex.Lock()
+	defer sm.mutex.Unlock()
+	if !prepared.ExplicitEffectiveAt {
+		prepared.EffectiveAt = time.Now().UTC()
+	}
+
+	var current Message
+	maxVersion := 0
+	for _, messages := range sm.sessions {
+		for _, msg := range messages {
+			info, ok := VersionInfo(msg)
+			if !ok || info.Namespace != prepared.Namespace || info.Key != prepared.Key {
+				continue
+			}
+			if info.Version > maxVersion {
+				maxVersion = info.Version
+			}
+			if isCurrentVersion(msg, prepared.EffectiveAt) {
+				currentInfo, hasCurrent := VersionInfo(current)
+				if !hasCurrent || info.Version > currentInfo.Version {
+					current = msg
+				}
+			}
+		}
+	}
+
+	if current.ID != "" {
+		info, _ := VersionInfo(current)
+		if current.Metadata.SessionID != prepared.Message.Metadata.SessionID {
+			return VersionedMessageResult{}, ErrVersionSessionChanged
+		}
+		if prepared.EffectiveAt.Before(info.ValidFrom) {
+			return VersionedMessageResult{}, ErrVersionEffectiveAtBeforeCurrent
+		}
+		if info.Revision == prepared.Revision {
+			sm.supersedeVersionsLocked(prepared.Namespace, prepared.Key, current.ID, prepared.EffectiveAt)
+			return versionResult(current, true)
+		}
+	}
+
+	msg := prepared.Message
+	version := maxVersion + 1
+	if msg.ID == "" {
+		msg.ID = versionedMessageID(prepared.Namespace, prepared.Key, version)
+	}
+	info := VersionMetadata{
+		Namespace: prepared.Namespace, Key: prepared.Key, Revision: prepared.Revision,
+		Version: version, Status: versionStatusActive, ValidFrom: prepared.EffectiveAt,
+		SupersedesID: current.ID,
+	}
+	setVersionInfo(&msg, info)
+	sm.supersedeVersionsLocked(prepared.Namespace, prepared.Key, msg.ID, prepared.EffectiveAt)
+	if err := sm.addMessageLocked(msg); err != nil {
+		return VersionedMessageResult{}, err
+	}
+	return versionResult(msg, false)
+}
+
+func (sm *SessionOnlyMemory) supersedeVersionsLocked(namespace, key, keepID string, at time.Time) {
+	for sessionID, messages := range sm.sessions {
+		for i := range messages {
+			info, ok := VersionInfo(messages[i])
+			if !ok || info.Namespace != namespace || info.Key != key ||
+				messages[i].ID == keepID || !isCurrentVersion(messages[i], at) {
+				continue
+			}
+			supersedeMessage(&messages[i], at)
+		}
+		sm.sessions[sessionID] = messages
+	}
+}
+
+// ListMessages returns messages matching typed management filters.
+func (sm *SessionOnlyMemory) ListMessages(
+	ctx context.Context,
+	req ListMessagesRequest,
+) ([]Message, error) {
+	if err := validateListRequest(req); err != nil {
+		return nil, err
+	}
+	sm.mutex.RLock()
+	defer sm.mutex.RUnlock()
+
+	now := time.Now()
+	var messages []Message
+	for _, sessionMessages := range sm.sessions {
+		for _, msg := range sessionMessages {
+			if messageMatchesFilter(msg, req.Filter, now) {
+				messages = append(messages, msg)
+			}
+		}
+	}
+	sortMessages(messages, req.Order)
+	return paginateMessages(messages, req.Offset, req.Limit), nil
+}
+
+// CountMessages counts messages matching typed management filters.
+func (sm *SessionOnlyMemory) CountMessages(
+	ctx context.Context,
+	filter MessageFilter,
+) (int64, error) {
+	if err := validateMessageFilter(filter); err != nil {
+		return 0, err
+	}
+	sm.mutex.RLock()
+	defer sm.mutex.RUnlock()
+
+	now := time.Now()
+	var count int64
+	for _, messages := range sm.sessions {
+		for _, msg := range messages {
+			if messageMatchesFilter(msg, filter, now) {
+				count++
+			}
+		}
+	}
+	return count, nil
+}
+
+// DeleteMessages removes messages matching a typed filter.
+func (sm *SessionOnlyMemory) DeleteMessages(
+	ctx context.Context,
+	req DeleteMessagesRequest,
+) (int64, error) {
+	if err := validateMessageFilter(req.Filter); err != nil {
+		return 0, err
+	}
+	if emptyMessageFilter(req.Filter) && !req.AllowAll {
+		return 0, ErrDeleteFilterRequired
+	}
+	sm.mutex.Lock()
+	defer sm.mutex.Unlock()
+
+	now := time.Now()
+	var deleted int64
+	for sessionID, messages := range sm.sessions {
+		kept := messages[:0]
+		for _, msg := range messages {
+			if messageMatchesFilter(msg, req.Filter, now) {
+				deleted++
+				continue
+			}
+			kept = append(kept, msg)
+		}
+		if len(kept) == 0 {
+			delete(sm.sessions, sessionID)
+			delete(sm.stats, sessionID)
+			continue
+		}
+		sm.sessions[sessionID] = kept
+		sm.updateStats(sessionID)
+	}
+	return deleted, nil
 }
 
 // GetRecentMessages retrieves recent messages from the session

@@ -44,6 +44,122 @@ type SearchResult struct {
 	Distance float32 `json:"distance"`
 }
 
+// VersionedMemory is an optional capability for atomically replacing facts
+// while retaining their history. Implementations returned by NewWithConfig
+// support this interface.
+type VersionedMemory interface {
+	PutVersionedMessage(ctx context.Context, req VersionedMessageRequest) (VersionedMessageResult, error)
+}
+
+// VersionedMessageRequest identifies one logical fact by Namespace and Key.
+// Revision is an opaque idempotency key for the fact's content. EffectiveAt
+// defaults to the current time. Message.Embedding may be precomputed.
+type VersionedMessageRequest struct {
+	Message     Message   `json:"message"`
+	Namespace   string    `json:"namespace"`
+	Key         string    `json:"key"`
+	Revision    string    `json:"revision"`
+	EffectiveAt time.Time `json:"effective_at,omitempty"`
+}
+
+// VersionedMessageResult reports the durable version selected by a write.
+type VersionedMessageResult struct {
+	Message      Message `json:"message"`
+	Version      int     `json:"version"`
+	Duplicate    bool    `json:"duplicate"`
+	SupersededID string  `json:"superseded_id,omitempty"`
+}
+
+// VersionMetadata describes a message's place in a keyed version chain.
+// Call VersionInfo to read it without depending on its storage representation.
+type VersionMetadata struct {
+	Namespace    string    `json:"namespace"`
+	Key          string    `json:"key"`
+	Revision     string    `json:"revision"`
+	Version      int       `json:"version"`
+	Status       string    `json:"status"`
+	ValidFrom    time.Time `json:"valid_from"`
+	ValidUntil   time.Time `json:"valid_until,omitempty"`
+	SupersedesID string    `json:"supersedes_id,omitempty"`
+}
+
+// ManagedMemory is an optional capability for typed message inspection and
+// deletion without exposing a backend connection or storage schema.
+type ManagedMemory interface {
+	ListMessages(ctx context.Context, req ListMessagesRequest) ([]Message, error)
+	CountMessages(ctx context.Context, filter MessageFilter) (int64, error)
+	DeleteMessages(ctx context.Context, req DeleteMessagesRequest) (int64, error)
+}
+
+// TemporalState limits messages by their version lifecycle.
+type TemporalState string
+
+const (
+	TemporalStateAny        TemporalState = ""
+	TemporalStateCurrent    TemporalState = "current"
+	TemporalStateHistorical TemporalState = "historical"
+)
+
+// MessageFilter contains only parameterizable, backend-portable predicates.
+// ExtraEquals is matched against Metadata.Extra using exact values.
+type MessageFilter struct {
+	MessageIDs     []string               `json:"message_ids,omitempty"`
+	SessionID      string                 `json:"session_id,omitempty"`
+	UserID         string                 `json:"user_id,omitempty"`
+	ExtraEquals    map[string]interface{} `json:"extra_equals,omitempty"`
+	ExtraEqualFold map[string]string      `json:"extra_equal_fold,omitempty"`
+	CreatedAfter   *time.Time             `json:"created_after,omitempty"`
+	CreatedBefore  *time.Time             `json:"created_before,omitempty"`
+	TemporalState  TemporalState          `json:"temporal_state,omitempty"`
+}
+
+// MessageOrder controls deterministic list ordering.
+type MessageOrder string
+
+const (
+	MessageOrderNewest MessageOrder = "newest"
+	MessageOrderOldest MessageOrder = "oldest"
+)
+
+type ListMessagesRequest struct {
+	Filter MessageFilter `json:"filter"`
+	Limit  int           `json:"limit,omitempty"`
+	Offset int           `json:"offset,omitempty"`
+	Order  MessageOrder  `json:"order,omitempty"`
+}
+
+// DeleteMessagesRequest requires an explicit filter unless AllowAll is true.
+type DeleteMessagesRequest struct {
+	Filter   MessageFilter `json:"filter"`
+	AllowAll bool          `json:"allow_all,omitempty"`
+}
+
+// SearchableMemory is an optional capability for filtered and temporal
+// retrieval. Legacy Search methods retain their existing behavior.
+type SearchableMemory interface {
+	SearchMessages(ctx context.Context, req SearchMessagesRequest) ([]SearchResult, error)
+}
+
+// TemporalPolicy controls version eligibility and ordering during search.
+type TemporalPolicy string
+
+const (
+	TemporalPolicyAllVersions  TemporalPolicy = ""
+	TemporalPolicyCurrentOnly  TemporalPolicy = "current_only"
+	TemporalPolicyCurrentFirst TemporalPolicy = "current_first"
+)
+
+// SearchMessagesRequest accepts either Query or a precomputed Embedding.
+// Embedding takes precedence when both are provided.
+type SearchMessagesRequest struct {
+	Query          string         `json:"query,omitempty"`
+	Embedding      []float32      `json:"embedding,omitempty"`
+	Limit          int            `json:"limit,omitempty"`
+	Threshold      float32        `json:"threshold,omitempty"`
+	Filter         MessageFilter  `json:"filter"`
+	TemporalPolicy TemporalPolicy `json:"temporal_policy,omitempty"`
+}
+
 // Summary represents a conversation summary
 type Summary struct {
 	SessionID    string    `json:"session_id"`

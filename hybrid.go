@@ -61,12 +61,22 @@ func NewHybridMemory(cfg Config) (Memory, error) {
 
 // AddMessage adds a message to both Redis (for fast access) and Supabase (for persistence)
 func (hm *HybridMemory) AddMessage(ctx context.Context, msg Message) error {
+	// Default the timestamp once here so both Supabase and Redis observe the
+	// same created_at; a zero time.Time would otherwise persist as year 0001.
+	if msg.Timestamp.IsZero() {
+		msg.Timestamp = time.Now()
+	}
+
 	// Add to Supabase for persistence and semantic search
 	if err := hm.supabase.AddMessage(ctx, msg); err != nil {
 		// Log but don't fail if Supabase write fails
 		fmt.Printf("Warning: failed to persist message to Supabase: %v\n", err)
 	}
 
+	return hm.cacheMessage(ctx, msg)
+}
+
+func (hm *HybridMemory) cacheMessage(ctx context.Context, msg Message) error {
 	// Add to Redis for fast session access
 	sessionKey := fmt.Sprintf("session:%s:messages", msg.Metadata.SessionID)
 
@@ -104,6 +114,61 @@ func (hm *HybridMemory) AddMessage(ctx context.Context, msg Message) error {
 	hm.redis.Expire(ctx, metaKey, hm.sessionTTL)
 
 	return nil
+}
+
+// PutVersionedMessage persists the version atomically before updating Redis.
+func (hm *HybridMemory) PutVersionedMessage(
+	ctx context.Context,
+	req VersionedMessageRequest,
+) (VersionedMessageResult, error) {
+	result, err := hm.supabase.PutVersionedMessage(ctx, req)
+	if err != nil {
+		return VersionedMessageResult{}, err
+	}
+	// Cached predecessors contain the metadata as it looked before the
+	// PostgreSQL transaction superseded them. Invalidate the whole session so
+	// the next read repopulates it from the durable source of truth.
+	if err := hm.ClearCache(ctx, result.Message.Metadata.SessionID); err != nil {
+		fmt.Printf("Warning: failed to invalidate versioned message cache: %v\n", err)
+	}
+	return result, nil
+}
+
+func (hm *HybridMemory) ListMessages(
+	ctx context.Context,
+	req ListMessagesRequest,
+) ([]Message, error) {
+	return hm.supabase.ListMessages(ctx, req)
+}
+
+func (hm *HybridMemory) CountMessages(
+	ctx context.Context,
+	filter MessageFilter,
+) (int64, error) {
+	return hm.supabase.CountMessages(ctx, filter)
+}
+
+func (hm *HybridMemory) DeleteMessages(
+	ctx context.Context,
+	req DeleteMessagesRequest,
+) (int64, error) {
+	count, sessions, err := hm.supabase.deleteMessages(ctx, req)
+	if err != nil {
+		return 0, err
+	}
+	for _, sessionID := range sessions {
+		if err := hm.ClearCache(ctx, sessionID); err != nil {
+			fmt.Printf("Warning: failed to invalidate deleted message cache: %v\n", err)
+		}
+	}
+	return count, nil
+}
+
+func (hm *HybridMemory) SearchMessages(
+	ctx context.Context,
+	req SearchMessagesRequest,
+) ([]SearchResult, error) {
+	return hm.supabase.SearchMessages(ctx, req)
 }
 
 // GetRecentMessages retrieves recent messages from Redis first, falls back to Supabase

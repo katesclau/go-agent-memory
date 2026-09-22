@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgvector/pgvector-go"
 	"github.com/sashabaranov/go-openai"
@@ -65,6 +66,32 @@ func (sm *SupabaseMemory) initSchema(ctx context.Context) error {
 	schema := fmt.Sprintf(`
 		-- Enable pgvector extension
 		CREATE EXTENSION IF NOT EXISTS vector;
+
+		-- Parse caller-provided lifecycle timestamps without allowing malformed
+		-- legacy metadata to fail a query.
+		CREATE OR REPLACE FUNCTION agent_memory_try_timestamptz(value TEXT)
+		RETURNS TIMESTAMPTZ
+		LANGUAGE plpgsql
+		IMMUTABLE
+		AS $function$
+		BEGIN
+			RETURN value::TIMESTAMPTZ;
+		EXCEPTION WHEN others THEN
+			RETURN NULL;
+		END;
+		$function$;
+
+		CREATE OR REPLACE FUNCTION agent_memory_try_bigint(value TEXT)
+		RETURNS BIGINT
+		LANGUAGE plpgsql
+		IMMUTABLE
+		AS $function$
+		BEGIN
+			RETURN value::BIGINT;
+		EXCEPTION WHEN others THEN
+			RETURN NULL;
+		END;
+		$function$;
 		
 		-- Create messages table
 		CREATE TABLE IF NOT EXISTS agent_messages (
@@ -84,6 +111,12 @@ func (sm *SupabaseMemory) initSchema(ctx context.Context) error {
 		CREATE INDEX IF NOT EXISTS idx_messages_session ON agent_messages(session_id);
 		CREATE INDEX IF NOT EXISTS idx_messages_user ON agent_messages(user_id);
 		CREATE INDEX IF NOT EXISTS idx_messages_created ON agent_messages(created_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_messages_extra ON agent_messages
+			USING gin ((metadata->'extra'));
+		CREATE INDEX IF NOT EXISTS idx_messages_version_scope ON agent_messages (
+			lower(coalesce(metadata->'extra'->'_memory_version'->>'namespace', '')),
+			lower(coalesce(metadata->'extra'->'_memory_version'->>'key', ''))
+		);
 		
 		-- Create HNSW index for fast similarity search
 		CREATE INDEX IF NOT EXISTS idx_messages_embedding ON agent_messages 
@@ -122,6 +155,14 @@ func (sm *SupabaseMemory) AddMessage(ctx context.Context, msg Message) error {
 		}
 	}
 
+	// Default created_at to the current time when the caller did not provide a
+	// timestamp. Binding a zero time.Time would otherwise write year 0001 to
+	// Postgres, overriding the schema's DEFAULT NOW() and making created_at
+	// unusable for ordering/TTL.
+	if msg.Timestamp.IsZero() {
+		msg.Timestamp = time.Now()
+	}
+
 	metadataJSON, err := json.Marshal(msg.Metadata)
 	if err != nil {
 		return fmt.Errorf("failed to marshal metadata: %w", err)
@@ -156,6 +197,247 @@ func (sm *SupabaseMemory) AddMessage(ctx context.Context, msg Message) error {
 	)
 
 	return err
+}
+
+// PutVersionedMessage atomically advances one keyed fact while preserving its
+// prior versions. Embedding generation happens before the transaction.
+func (sm *SupabaseMemory) PutVersionedMessage(
+	ctx context.Context,
+	req VersionedMessageRequest,
+) (VersionedMessageResult, error) {
+	prepared, err := prepareVersionRequest(req)
+	if err != nil {
+		return VersionedMessageResult{}, err
+	}
+
+	current, err := sm.currentVersion(ctx, prepared.Namespace, prepared.Key, prepared.EffectiveAt)
+	if err != nil && err != pgx.ErrNoRows {
+		return VersionedMessageResult{}, err
+	}
+	currentInfo, duplicate := VersionInfo(current)
+	duplicate = duplicate && currentInfo.Revision == prepared.Revision
+
+	if !duplicate && len(prepared.Message.Embedding) == 0 && prepared.Message.Content != "" {
+		embedding, embeddingErr := sm.generateEmbedding(ctx, prepared.Message.Content)
+		if embeddingErr != nil {
+			fmt.Printf("Warning: failed to generate embedding: %v\n", embeddingErr)
+		} else {
+			prepared.Message.Embedding = embedding
+		}
+	}
+
+	tx, err := sm.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return VersionedMessageResult{}, fmt.Errorf("begin versioned message transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx,
+		`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+		versionScope(prepared.Namespace, prepared.Key),
+	); err != nil {
+		return VersionedMessageResult{}, fmt.Errorf("lock versioned message: %w", err)
+	}
+	if !prepared.ExplicitEffectiveAt {
+		prepared.EffectiveAt = time.Now().UTC()
+	}
+
+	messages, err := queryVersions(ctx, tx, prepared.Namespace, prepared.Key)
+	if err != nil {
+		return VersionedMessageResult{}, err
+	}
+	current = Message{}
+	maxVersion := 0
+	for _, msg := range messages {
+		info, ok := VersionInfo(msg)
+		if !ok {
+			continue
+		}
+		if info.Version > maxVersion {
+			maxVersion = info.Version
+		}
+		if isCurrentVersion(msg, prepared.EffectiveAt) {
+			currentInfo, hasCurrent := VersionInfo(current)
+			if !hasCurrent || info.Version > currentInfo.Version {
+				current = msg
+			}
+		}
+	}
+
+	if current.ID != "" {
+		info, _ := VersionInfo(current)
+		if current.Metadata.SessionID != prepared.Message.Metadata.SessionID {
+			return VersionedMessageResult{}, ErrVersionSessionChanged
+		}
+		if prepared.EffectiveAt.Before(info.ValidFrom) {
+			return VersionedMessageResult{}, ErrVersionEffectiveAtBeforeCurrent
+		}
+		if info.Revision == prepared.Revision {
+			if err := supersedeOtherVersions(ctx, tx, prepared.Namespace, prepared.Key, current.ID, prepared.EffectiveAt); err != nil {
+				return VersionedMessageResult{}, err
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return VersionedMessageResult{}, fmt.Errorf("commit idempotent version repair: %w", err)
+			}
+			return versionResult(current, true)
+		}
+	}
+	if duplicate && len(prepared.Message.Embedding) == 0 && prepared.Message.Content != "" {
+		// The preflight observed this revision as current, but another writer
+		// advanced the chain before this transaction acquired the lock. Release
+		// the lock, generate the embedding, and retry against the new state.
+		if err := tx.Rollback(ctx); err != nil {
+			return VersionedMessageResult{}, fmt.Errorf("rollback version embedding retry: %w", err)
+		}
+		retry := req
+		if !prepared.ExplicitEffectiveAt {
+			retry.EffectiveAt = time.Time{}
+		}
+		embedding, embeddingErr := sm.generateEmbedding(ctx, prepared.Message.Content)
+		if embeddingErr != nil {
+			fmt.Printf("Warning: failed to generate embedding: %v\n", embeddingErr)
+		} else {
+			retry.Message.Embedding = embedding
+		}
+		return sm.PutVersionedMessage(ctx, retry)
+	}
+
+	msg := prepared.Message
+	version := maxVersion + 1
+	if msg.ID == "" {
+		msg.ID = versionedMessageID(prepared.Namespace, prepared.Key, version)
+	}
+	msg.Timestamp = prepared.EffectiveAt
+	setVersionInfo(&msg, VersionMetadata{
+		Namespace: prepared.Namespace, Key: prepared.Key, Revision: prepared.Revision,
+		Version: version, Status: versionStatusActive, ValidFrom: prepared.EffectiveAt,
+		SupersedesID: current.ID,
+	})
+	metadataJSON, err := json.Marshal(msg.Metadata)
+	if err != nil {
+		return VersionedMessageResult{}, fmt.Errorf("marshal versioned message metadata: %w", err)
+	}
+	var embedding interface{}
+	if len(msg.Embedding) > 0 {
+		embedding = pgvector.NewVector(msg.Embedding)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO agent_messages (
+			message_id, session_id, user_id, role, content, metadata, embedding, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		msg.ID, msg.Metadata.SessionID, msg.Metadata.UserID, msg.Role,
+		msg.Content, metadataJSON, embedding, msg.Timestamp,
+	); err != nil {
+		return VersionedMessageResult{}, fmt.Errorf("insert versioned message: %w", err)
+	}
+	if err := supersedeOtherVersions(ctx, tx, prepared.Namespace, prepared.Key, msg.ID, prepared.EffectiveAt); err != nil {
+		return VersionedMessageResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return VersionedMessageResult{}, fmt.Errorf("commit versioned message: %w", err)
+	}
+	return versionResult(msg, false)
+}
+
+func (sm *SupabaseMemory) currentVersion(
+	ctx context.Context,
+	namespace, key string,
+	now time.Time,
+) (Message, error) {
+	rows, err := sm.db.Query(ctx, `
+		SELECT message_id, role, content, metadata, created_at
+		FROM agent_messages
+		WHERE lower(coalesce(metadata->'extra'->'_memory_version'->>'namespace', '')) = $1
+		  AND lower(coalesce(metadata->'extra'->'_memory_version'->>'key', '')) = $2
+		ORDER BY
+		  CASE WHEN (metadata->'extra'->'_memory_version'->>'version') ~ '^[0-9]+$'
+		       THEN (metadata->'extra'->'_memory_version'->>'version')::integer ELSE 0 END DESC,
+		  created_at DESC`,
+		namespace, key,
+	)
+	if err != nil {
+		return Message{}, fmt.Errorf("query current version: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		msg, err := scanManagedMessage(rows)
+		if err != nil {
+			return Message{}, err
+		}
+		if isCurrentVersion(msg, now) {
+			return msg, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return Message{}, err
+	}
+	return Message{}, pgx.ErrNoRows
+}
+
+func queryVersions(
+	ctx context.Context,
+	tx pgx.Tx,
+	namespace, key string,
+) ([]Message, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT message_id, role, content, metadata, created_at
+		FROM agent_messages
+		WHERE lower(coalesce(metadata->'extra'->'_memory_version'->>'namespace', '')) = $1
+		  AND lower(coalesce(metadata->'extra'->'_memory_version'->>'key', '')) = $2`,
+		namespace, key,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query message versions: %w", err)
+	}
+	defer rows.Close()
+	var messages []Message
+	for rows.Next() {
+		msg, err := scanManagedMessage(rows)
+		if err != nil {
+			return nil, err
+		}
+		messages = append(messages, msg)
+	}
+	return messages, rows.Err()
+}
+
+func scanManagedMessage(row interface{ Scan(...interface{}) error }) (Message, error) {
+	var msg Message
+	var metadataJSON []byte
+	if err := row.Scan(&msg.ID, &msg.Role, &msg.Content, &metadataJSON, &msg.Timestamp); err != nil {
+		return Message{}, fmt.Errorf("scan message: %w", err)
+	}
+	if len(metadataJSON) > 0 {
+		if err := json.Unmarshal(metadataJSON, &msg.Metadata); err != nil {
+			return Message{}, fmt.Errorf("decode message metadata: %w", err)
+		}
+	}
+	return msg, nil
+}
+
+func supersedeOtherVersions(
+	ctx context.Context,
+	tx pgx.Tx,
+	namespace, key, keepID string,
+	at time.Time,
+) error {
+	_, err := tx.Exec(ctx, `
+		UPDATE agent_messages
+		SET metadata = jsonb_set(
+			jsonb_set(metadata, '{extra,_memory_version,status}', to_jsonb($1::text), true),
+			'{extra,_memory_version,valid_until}', to_jsonb($2::text), true
+		), updated_at = NOW()
+		WHERE lower(coalesce(metadata->'extra'->'_memory_version'->>'namespace', '')) = $3
+		  AND lower(coalesce(metadata->'extra'->'_memory_version'->>'key', '')) = $4
+		  AND message_id <> $5
+		  AND lower(coalesce(metadata->'extra'->'_memory_version'->>'status', 'active')) <> 'superseded'`,
+		versionStatusSuperseded, at.UTC().Format(time.RFC3339Nano),
+		namespace, key, keepID,
+	)
+	if err != nil {
+		return fmt.Errorf("supersede prior message versions: %w", err)
+	}
+	return nil
 }
 
 // GetRecentMessages retrieves recent messages for a session

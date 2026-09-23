@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -23,6 +25,11 @@ type SupabaseMemory struct {
 
 // NewSupabaseMemory creates a new Supabase-based memory instance
 func NewSupabaseMemory(cfg Config) (Memory, error) {
+	openAIConfig, err := openAIClientConfig(cfg.OpenAIKey, cfg.OpenAIBaseURL)
+	if err != nil {
+		return nil, err
+	}
+
 	// Connect to PostgreSQL
 	config, err := pgxpool.ParseConfig(cfg.DatabaseURL)
 	if err != nil {
@@ -35,7 +42,7 @@ func NewSupabaseMemory(cfg Config) (Memory, error) {
 	}
 
 	// Create OpenAI client for embeddings
-	openaiClient := openai.NewClient(cfg.OpenAIKey)
+	openaiClient := openai.NewClientWithConfig(openAIConfig)
 
 	// Set defaults
 	if cfg.EmbeddingModel == "" {
@@ -59,6 +66,23 @@ func NewSupabaseMemory(cfg Config) (Memory, error) {
 	}
 
 	return sm, nil
+}
+
+func openAIClientConfig(apiKey, baseURL string) (openai.ClientConfig, error) {
+	config := openai.DefaultConfig(apiKey)
+	baseURL = strings.TrimSpace(baseURL)
+	if baseURL == "" {
+		return config, nil
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" ||
+		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" {
+		return openai.ClientConfig{}, fmt.Errorf(
+			"openai base URL must be an absolute HTTPS URL without credentials, query, or fragment",
+		)
+	}
+	config.BaseURL = strings.TrimRight(baseURL, "/")
+	return config, nil
 }
 
 // initSchema creates the necessary tables and indexes

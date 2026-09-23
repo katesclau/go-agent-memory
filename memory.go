@@ -236,6 +236,7 @@ type Config struct {
 
 	// OpenAI Configuration (for embeddings)
 	OpenAIKey      string `json:"openai_key,omitempty"`
+	OpenAIBaseURL  string `json:"openai_base_url,omitempty"`
 	EmbeddingModel string `json:"embedding_model,omitempty"` // default: "text-embedding-3-small"
 
 	// Memory Settings

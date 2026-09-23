@@ -175,6 +175,7 @@ func initMemory() {
         Mode:        memory.HYBRID, // Or PERSISTENT, SESSION_ONLY
         DatabaseURL: dbURL,
         OpenAIKey:   os.Getenv("OPENAI_API_KEY"),
+        OpenAIBaseURL: os.Getenv("OPENAI_BASE_URL"), // Optional regional endpoint
         
         // Optional Redis for faster session access
         RedisAddr:     os.Getenv("REDIS_URL"), // e.g., "localhost:6379"

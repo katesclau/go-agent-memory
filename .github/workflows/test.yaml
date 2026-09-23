@@ -1,0 +1,54 @@
+name: Test
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: agent_memory
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d agent_memory"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      MEMORY_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/agent_memory?sslmode=disable
+      MEMORY_TEST_REDIS_ADDR: localhost:6379
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: "1.25"
+          check-latest: true
+      - name: Initialize pgvector
+        run: >-
+          docker exec
+          "$(docker ps --filter ancestor=pgvector/pgvector:pg16 --format '{{.ID}}')"
+          psql -U postgres -d agent_memory
+          -c 'CREATE EXTENSION IF NOT EXISTS vector'
+      - name: Test
+        run: go test -v -count=1 -race ./... ./tests/...

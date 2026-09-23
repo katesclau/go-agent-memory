@@ -133,6 +133,22 @@ func TestSessionOnlyRejectsFutureAndBackdatedVersions(t *testing.T) {
 	}
 }
 
+func TestVersionLockKeyIsStableAndScopesNamespaceAndKey(t *testing.T) {
+	lockKey := versionLockKey("service", "timeout")
+	if lockKey != versionLockKey("service", "timeout") {
+		t.Fatal("version lock key is not stable")
+	}
+	if lockKey == versionLockKey("other-service", "timeout") {
+		t.Fatal("version lock key does not isolate namespaces")
+	}
+	if lockKey == versionLockKey("service", "other-timeout") {
+		t.Fatal("version lock key does not isolate keys")
+	}
+	if versionLockKey("ab", "c") == versionLockKey("a", "bc") {
+		t.Fatal("version lock key does not preserve component boundaries")
+	}
+}
+
 func TestVersionInfoRejectsFractionalVersion(t *testing.T) {
 	msg := Message{Metadata: Metadata{Extra: map[string]interface{}{
 		versionMetadataKey: map[string]interface{}{

@@ -190,15 +190,15 @@ func postgresHistoricalPredicate(filter MessageFilter) string {
 }
 
 func postgresFlatHistoricalPredicate() string {
-	return `(
+	return `COALESCE((
 		lower(btrim(coalesce(metadata->'extra'->>'status', ''))) = 'superseded'
 		OR agent_memory_try_timestamptz(metadata->'extra'->>'valid_until') <= CURRENT_TIMESTAMP
-	)`
+	), FALSE)`
 }
 
 func postgresHistoricalVersionPredicate() string {
 	const version = "metadata->'extra'->'_memory_version'"
-	return fmt.Sprintf(`(
+	return fmt.Sprintf(`COALESCE((
 		jsonb_typeof(%[1]s) = 'object'
 		AND nullif(%[1]s->>'namespace', '') IS NOT NULL
 		AND nullif(%[1]s->>'key', '') IS NOT NULL
@@ -209,5 +209,5 @@ func postgresHistoricalVersionPredicate() string {
 			lower(coalesce(%[1]s->>'status', 'active')) = 'superseded'
 			OR agent_memory_try_timestamptz(%[1]s->>'valid_until') <= CURRENT_TIMESTAMP
 		)
-	)`, version)
+	), FALSE)`, version)
 }

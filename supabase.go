@@ -233,8 +233,8 @@ func (sm *SupabaseMemory) PutVersionedMessage(
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	if _, err := tx.Exec(ctx,
-		`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
-		versionScope(prepared.Namespace, prepared.Key),
+		`SELECT pg_advisory_xact_lock($1)`,
+		versionLockKey(prepared.Namespace, prepared.Key),
 	); err != nil {
 		return VersionedMessageResult{}, fmt.Errorf("lock versioned message: %w", err)
 	}

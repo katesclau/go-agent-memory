@@ -2,6 +2,7 @@ package memory
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -144,8 +145,16 @@ func versionedMessageID(namespace, key string, version int) string {
 	return "vm_" + hex.EncodeToString(sum[:16])
 }
 
-func versionScope(namespace, key string) string {
-	return namespace + "\x00" + key
+func versionLockKey(namespace, key string) int64 {
+	hasher := sha256.New()
+	var length [8]byte
+	for _, value := range []string{namespace, key} {
+		binary.BigEndian.PutUint64(length[:], uint64(len(value)))
+		_, _ = hasher.Write(length[:])
+		_, _ = hasher.Write([]byte(value))
+	}
+	sum := hasher.Sum(nil)
+	return int64(binary.BigEndian.Uint64(sum[:8]) >> 1)
 }
 
 func versionNumber(value interface{}) int {
